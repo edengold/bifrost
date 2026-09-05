@@ -936,6 +936,13 @@ func enrichListModelsResponse(resp *schemas.BifrostListModelsResponse, catalog *
 		if pricingEntry == nil && modelEntry.Alias != nil {
 			pricingEntry = catalog.GetPricingEntryForModel(*modelEntry.Alias, provider)
 		}
+		// OpenRouter advertises batch availability as `<slug>:batch` variant rows
+		// at /v1/models. Those IDs have no datasheet row of their own — retry with
+		// the suffix stripped so the variant gets the base model's enrichment
+		// (context length, resolved name).
+		if pricingEntry == nil && strings.HasSuffix(modelName, ":batch") {
+			pricingEntry = catalog.GetPricingEntryForModel(strings.TrimSuffix(modelName, ":batch"), provider)
+		}
 		// Same mapping ctx.GetModelInfo hands to plugins, so the two never drift.
 		modelcatalog.ApplyModelInfo(&modelEntry, pricingEntry)
 		resp.Data[i] = modelEntry

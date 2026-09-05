@@ -1573,6 +1573,11 @@ var AllProviderConfigs = []ComprehensiveTestConfig{
 			TranscriptionStream:        false,
 			Embedding:                  false,
 			ListModels:                 true,
+			BatchCreate:                true,
+			BatchList:                  true,
+			BatchRetrieve:              true,
+			BatchCancel:                true,
+			BatchResults:               true,
 		},
 		Fallbacks: []schemas.Fallback{
 			{Provider: schemas.OpenAI, Model: "gpt-4o-mini"},

@@ -15,7 +15,7 @@ func getFakeBatchID(provider schemas.ModelProvider) string {
 	switch provider {
 	case schemas.Anthropic:
 		return "msgbatch_test-batch-id"
-	case schemas.OpenAI, schemas.Azure:
+	case schemas.OpenAI, schemas.Azure, schemas.OpenRouter:
 		return "batch_test-batch-id"
 	case schemas.Bedrock:
 		// Bedrock uses ARNs for batch IDs - job ID must be exactly 12 lowercase alphanumeric chars

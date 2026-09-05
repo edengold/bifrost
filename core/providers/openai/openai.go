@@ -6170,284 +6170,47 @@ func (provider *OpenAIProvider) BatchCreate(ctx *schemas.BifrostContext, key sch
 // BatchList lists batch jobs using serial pagination across keys.
 // Exhausts all pages from one key before moving to the next.
 func (provider *OpenAIProvider) BatchList(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostBatchListRequest) (*schemas.BifrostBatchListResponse, *schemas.BifrostError) {
-	if err := providerUtils.CheckOperationAllowed(schemas.OpenAI, provider.customProviderConfig, schemas.BatchListRequest); err != nil {
-		return nil, err
-	}
-
-	sendBackRawRequest := providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest)
-	sendBackRawResponse := providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse)
-
-	// Initialize serial pagination helper
-	helper, err := providerUtils.NewSerialListHelper(keys, request.After, provider.logger, true)
-	if err != nil {
-		return nil, providerUtils.NewBifrostOperationError("invalid pagination cursor", err)
-	}
-
-	// Get current key to query
-	key, nativeCursor, ok := helper.GetCurrentKey()
-	if !ok {
-		// All keys exhausted
-		return &schemas.BifrostBatchListResponse{
-			Object:  "list",
-			Data:    []schemas.BifrostBatchRetrieveResponse{},
-			HasMore: false,
-		}, nil
-	}
-
-	// Create request
-	req := fasthttp.AcquireRequest()
-	resp := fasthttp.AcquireResponse()
-	defer fasthttp.ReleaseRequest(req)
-	defer fasthttp.ReleaseResponse(resp)
-
-	// Build URL with query params
-	baseURL := provider.buildRequestURL(ctx, "/v1/batches", schemas.BatchListRequest)
-	values := url.Values{}
-	if request.Limit > 0 {
-		values.Set("limit", fmt.Sprintf("%d", request.Limit))
-	}
-	// Use native cursor from serial helper instead of request.After
-	if nativeCursor != "" {
-		values.Set("after", nativeCursor)
-	}
-	requestURL := baseURL
-	if encodedValues := values.Encode(); encodedValues != "" {
-		requestURL += "?" + encodedValues
-	}
-
-	// Set headers
-	providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
-	req.SetRequestURI(requestURL)
-	req.Header.SetMethod(http.MethodGet)
-	req.Header.SetContentType("application/json")
-
-	if key.Value.GetValue() != "" {
-		req.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
-	}
-
-	// Make request
-	latency, bifrostErr, wait := providerUtils.MakeRequestWithContext(ctx, provider.client, req, resp)
-	defer wait()
-	if bifrostErr != nil {
-		return nil, bifrostErr
-	}
-
-	// Handle error response
-	if resp.StatusCode() != fasthttp.StatusOK {
-		return nil, providerUtils.SetErrorLatency(ParseOpenAIError(resp), latency)
-	}
-
-	body, decodeErr := providerUtils.CheckAndDecodeBody(resp)
-	if decodeErr != nil {
-		return nil, providerUtils.NewBifrostOperationError(schemas.ErrProviderResponseDecode, decodeErr)
-	}
-
-	var openAIResp OpenAIBatchListResponse
-	rawRequest, rawResponse, bifrostErr := providerUtils.HandleProviderResponse(body, &openAIResp, nil, sendBackRawRequest, sendBackRawResponse)
-	if bifrostErr != nil {
-		return nil, bifrostErr
-	}
-
-	// Convert batches to Bifrost format
-	batches := make([]schemas.BifrostBatchRetrieveResponse, 0, len(openAIResp.Data))
-	var lastBatchID string
-	for _, batch := range openAIResp.Data {
-		batches = append(batches, *batch.ToBifrostBatchRetrieveResponse(latency, sendBackRawRequest, sendBackRawResponse, rawRequest, rawResponse))
-		lastBatchID = batch.ID
-	}
-
-	// Build cursor for next request
-	// OpenAI uses LastID as the cursor for pagination
-	nextCursor, hasMore := helper.BuildNextCursor(openAIResp.HasMore, lastBatchID)
-
-	// Convert to Bifrost response
-	bifrostResp := &schemas.BifrostBatchListResponse{
-		Object:  "list",
-		Data:    batches,
-		HasMore: hasMore,
-		ExtraFields: schemas.BifrostResponseExtraFields{
-			Latency: latency.Milliseconds(),
-		},
-	}
-	if nextCursor != "" {
-		bifrostResp.NextCursor = &nextCursor
-	}
-
-	return bifrostResp, nil
+	return HandleOpenAIBatchListRequest(ctx, BatchSharedConfig{
+		Client:               provider.client,
+		BaseURL:              provider.networkConfig.BaseURL,
+		BatchesPath:          "/v1/batches",
+		ExtraHeaders:         provider.networkConfig.ExtraHeaders,
+		CustomProviderConfig: provider.customProviderConfig,
+		Provider:             schemas.OpenAI,
+		SendBackRawRequest:   provider.sendBackRawRequest,
+		SendBackRawResponse:  provider.sendBackRawResponse,
+		Logger:               provider.logger,
+	}, keys, request)
 }
 
 // BatchRetrieve retrieves a specific batch job by trying each key until found.
 func (provider *OpenAIProvider) BatchRetrieve(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostBatchRetrieveRequest) (*schemas.BifrostBatchRetrieveResponse, *schemas.BifrostError) {
-	if err := providerUtils.CheckOperationAllowed(schemas.OpenAI, provider.customProviderConfig, schemas.BatchRetrieveRequest); err != nil {
-		return nil, err
-	}
-
-	if request.BatchID == "" {
-		return nil, providerUtils.NewBifrostOperationError("batch_id is required", nil)
-	}
-
-	sendBackRawRequest := providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest)
-	sendBackRawResponse := providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse)
-
-	var lastErr *schemas.BifrostError
-	for _, key := range keys {
-		// Create request
-		req := fasthttp.AcquireRequest()
-		resp := fasthttp.AcquireResponse()
-
-		// Set headers
-		providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
-		req.SetRequestURI(provider.networkConfig.BaseURL + "/v1/batches/" + request.BatchID)
-		req.Header.SetMethod(http.MethodGet)
-		req.Header.SetContentType("application/json")
-
-		if key.Value.GetValue() != "" {
-			req.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
-		}
-
-		// Make request
-		latency, bifrostErr, wait := providerUtils.MakeRequestWithContext(ctx, provider.client, req, resp)
-		wait()
-		if bifrostErr != nil {
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			lastErr = bifrostErr
-			continue
-		}
-
-		// Handle error response
-		if resp.StatusCode() != fasthttp.StatusOK {
-			lastErr = ParseOpenAIError(resp)
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			continue
-		}
-
-		body, err := providerUtils.CheckAndDecodeBody(resp)
-		if err != nil {
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			lastErr = providerUtils.NewBifrostOperationError(schemas.ErrProviderResponseDecode, err)
-			continue
-		}
-
-		var openAIResp OpenAIBatchResponse
-		rawRequest, rawResponse, bifrostErr := providerUtils.HandleProviderResponse(body, &openAIResp, nil, sendBackRawRequest, sendBackRawResponse)
-		if bifrostErr != nil {
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			lastErr = bifrostErr
-			continue
-		}
-
-		fasthttp.ReleaseRequest(req)
-		fasthttp.ReleaseResponse(resp)
-
-		result := openAIResp.ToBifrostBatchRetrieveResponse(latency, sendBackRawRequest, sendBackRawResponse, rawRequest, rawResponse)
-		return result, nil
-	}
-
-	return nil, lastErr
+	return HandleOpenAIBatchRetrieveRequest(ctx, BatchSharedConfig{
+		Client:               provider.client,
+		BaseURL:              provider.networkConfig.BaseURL,
+		BatchesPath:          "/v1/batches",
+		ExtraHeaders:         provider.networkConfig.ExtraHeaders,
+		CustomProviderConfig: provider.customProviderConfig,
+		Provider:             schemas.OpenAI,
+		SendBackRawRequest:   provider.sendBackRawRequest,
+		SendBackRawResponse:  provider.sendBackRawResponse,
+		Logger:               provider.logger,
+	}, keys, request)
 }
 
 // BatchCancel cancels a batch job by trying each key until successful.
 func (provider *OpenAIProvider) BatchCancel(ctx *schemas.BifrostContext, keys []schemas.Key, request *schemas.BifrostBatchCancelRequest) (*schemas.BifrostBatchCancelResponse, *schemas.BifrostError) {
-	if err := providerUtils.CheckOperationAllowed(schemas.OpenAI, provider.customProviderConfig, schemas.BatchCancelRequest); err != nil {
-		return nil, err
-	}
-
-	if request.BatchID == "" {
-		return nil, providerUtils.NewBifrostOperationError("batch_id is required", nil)
-	}
-
-	sendBackRawRequest := providerUtils.ShouldSendBackRawRequest(ctx, provider.sendBackRawRequest)
-	sendBackRawResponse := providerUtils.ShouldSendBackRawResponse(ctx, provider.sendBackRawResponse)
-
-	var lastErr *schemas.BifrostError
-	for _, key := range keys {
-		// Create request
-		req := fasthttp.AcquireRequest()
-		resp := fasthttp.AcquireResponse()
-
-		// Set headers
-		providerUtils.SetExtraHeaders(ctx, req, provider.networkConfig.ExtraHeaders, nil)
-		req.SetRequestURI(provider.networkConfig.BaseURL + "/v1/batches/" + request.BatchID + "/cancel")
-		req.Header.SetMethod(http.MethodPost)
-		req.Header.SetContentType("application/json")
-
-		if key.Value.GetValue() != "" {
-			req.Header.Set("Authorization", "Bearer "+key.Value.GetValue())
-		}
-
-		// Make request
-		latency, bifrostErr, wait := providerUtils.MakeRequestWithContext(ctx, provider.client, req, resp)
-		wait()
-		if bifrostErr != nil {
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			lastErr = bifrostErr
-			continue
-		}
-
-		// Handle error response
-		if resp.StatusCode() != fasthttp.StatusOK {
-			lastErr = ParseOpenAIError(resp)
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			continue
-		}
-
-		body, err := providerUtils.CheckAndDecodeBody(resp)
-		if err != nil {
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			lastErr = providerUtils.NewBifrostOperationError(schemas.ErrProviderResponseDecode, err)
-			continue
-		}
-
-		var openAIResp OpenAIBatchResponse
-		rawRequest, rawResponse, bifrostErr := providerUtils.HandleProviderResponse(body, &openAIResp, nil, sendBackRawRequest, sendBackRawResponse)
-		if bifrostErr != nil {
-			fasthttp.ReleaseRequest(req)
-			fasthttp.ReleaseResponse(resp)
-			lastErr = bifrostErr
-			continue
-		}
-
-		fasthttp.ReleaseRequest(req)
-		fasthttp.ReleaseResponse(resp)
-
-		result := &schemas.BifrostBatchCancelResponse{
-			ID:           openAIResp.ID,
-			Object:       openAIResp.Object,
-			Status:       ToBifrostBatchStatus(openAIResp.Status),
-			CancellingAt: openAIResp.CancellingAt,
-			CancelledAt:  openAIResp.CancelledAt,
-			ExtraFields: schemas.BifrostResponseExtraFields{
-				Latency: latency.Milliseconds(),
-			},
-		}
-
-		if openAIResp.RequestCounts != nil {
-			result.RequestCounts = schemas.BatchRequestCounts{
-				Total:     openAIResp.RequestCounts.Total,
-				Completed: openAIResp.RequestCounts.Completed,
-				Failed:    openAIResp.RequestCounts.Failed,
-			}
-		}
-
-		if sendBackRawRequest {
-			result.ExtraFields.RawRequest = rawRequest
-		}
-
-		if sendBackRawResponse {
-			result.ExtraFields.RawResponse = rawResponse
-		}
-
-		return result, nil
-	}
-
-	return nil, lastErr
+	return HandleOpenAIBatchCancelRequest(ctx, BatchSharedConfig{
+		Client:               provider.client,
+		BaseURL:              provider.networkConfig.BaseURL,
+		BatchesPath:          "/v1/batches",
+		ExtraHeaders:         provider.networkConfig.ExtraHeaders,
+		CustomProviderConfig: provider.customProviderConfig,
+		Provider:             schemas.OpenAI,
+		SendBackRawRequest:   provider.sendBackRawRequest,
+		SendBackRawResponse:  provider.sendBackRawResponse,
+		Logger:               provider.logger,
+	}, keys, request)
 }
 
 // BatchDelete is not supported by the OpenAI provider.

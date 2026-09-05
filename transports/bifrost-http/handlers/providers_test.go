@@ -613,6 +613,44 @@ func TestEnrichListModelsResponse_MarksDeprecatedPricingRows(t *testing.T) {
 	}
 }
 
+// OpenRouter advertises batch availability as `<slug>:batch` variant rows at
+// /v1/models. Those IDs have no datasheet row, so enrichment must retry with
+// the suffix stripped and backfill the base model's metadata.
+func TestEnrichListModelsResponse_FallsBackToStrippedBatchVariant(t *testing.T) {
+	catalog := modelCatalogForPricingJSON(t, []byte(`{
+		"openrouter/google/gemini-3.5-flash-lite": {"provider":"openrouter","mode":"chat","base_model":"gemini-3.5-flash-lite","max_input_tokens":1048576,"input_cost_per_token":1e-07}
+	}`))
+	resp := &schemas.BifrostListModelsResponse{Data: []schemas.Model{
+		{ID: "openrouter/google/gemini-3.5-flash-lite:batch"},
+		{ID: "openrouter/google/gemini-3.5-flash-lite"},
+		{ID: "openrouter/google/unknown-model:batch"},
+	}}
+
+	enrichListModelsResponse(resp, catalog)
+
+	byID := map[string]schemas.Model{}
+	for _, m := range resp.Data {
+		byID[m.ID] = m
+	}
+	variant := byID["openrouter/google/gemini-3.5-flash-lite:batch"]
+	if variant.ContextLength == nil || *variant.ContextLength != 1048576 {
+		t.Fatalf(":batch variant should inherit base-model context length, got %#v", variant)
+	}
+	if variant.NormalizedName == nil || *variant.NormalizedName == "" {
+		t.Fatalf(":batch variant should inherit base-model normalized name, got %#v", variant)
+	}
+	// Exact match still wins for the bare slug.
+	base := byID["openrouter/google/gemini-3.5-flash-lite"]
+	if base.ContextLength == nil || *base.ContextLength != 1048576 {
+		t.Fatalf("bare slug should enrich directly, got %#v", base)
+	}
+	// A :batch variant whose base is also unknown stays unenriched — no panic.
+	unknown := byID["openrouter/google/unknown-model:batch"]
+	if unknown.ContextLength != nil {
+		t.Fatalf("unknown :batch variant must stay unenriched, got %#v", unknown)
+	}
+}
+
 func TestListModels_UnfilteredIgnoresKeys(t *testing.T) {
 	SetLogger(&mockLogger{})
 

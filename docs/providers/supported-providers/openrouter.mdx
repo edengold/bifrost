@@ -26,12 +26,12 @@ OpenRouter is an **OpenAI-compatible provider routing service** that accesses mo
 | Transcriptions (STT) | ✅ | ❌ | `/v1/audio/transcriptions` |
 | Image Generation | ❌ | ❌ | - |
 | Files | ❌ | ❌ | - |
-| Batch | ❌ | ❌ | - |
+| Batch | ✅ | ❌ | `/v1/batches` (via OpenRouter beta Batch API) |
 
 <Note>
-**Unsupported Operations** (❌): Image Generation, Files, Batch, and streaming Speech/Transcriptions are not supported by the upstream OpenRouter API. These return a `BifrostError` with an error code of `"unsupported_operation"`.
+**Unsupported Operations** (❌): Image Generation, Files, and streaming Speech/Transcriptions are not supported by the upstream OpenRouter API. These return a `BifrostError` with an error code of `"unsupported_operation"`.
 
-**Note**: OpenRouter's Responses API is currently in **beta**.
+**Note**: OpenRouter's Responses API is currently in **beta**. Batch support routes to OpenRouter's beta Batch API (`/api/beta/batches`). See [Batch Operations](#batch-operations) below.
 </Note>
 
 ## Setup & Configuration
@@ -228,6 +228,19 @@ Streaming Speech and Transcription are not supported by the upstream OpenRouter 
 
 ---
 
+## Batch Operations
+
+OpenRouter batch requests route to OpenRouter's **beta Batch API** (`/api/beta/batches`) under the hood while the client surface stays OpenAI-compatible (Bifrost's generic `/v1/batches` endpoints):
+
+- **Create**: inline `requests` only — file-based batching (`input_file_id`) is rejected with a clear error, since OpenRouter has no file upload API. The batch-level `model` is derived from `model` or the per-request bodies; the `openrouter/` prefix and a `:batch` suffix (as advertised at `/v1/models`) are stripped automatically. Supported endpoints: `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/embeddings` (not `/v1/completions`).
+- **List / Retrieve / Cancel**: wire-identical to OpenAI's batch endpoints (same statuses and pagination).
+- **Results**: returned inline on the batch object once the batch is `completed` — no output-file download.
+- Batch requests are billed at 50% of standard pricing; `completion_window` is fixed at 24h (ignored if sent).
+
+**Batch availability per model**: OpenRouter advertises batch support as `<slug>:batch` variant rows at `/v1/models` (visible through Bifrost's model list as `openrouter/<slug>:batch`). Submitting a batch for a model without a `:batch` variant fails at submission with OpenRouter's validation error.
+
+---
+
 ## Unsupported Features
 
 | Feature | Reason |
@@ -235,7 +248,7 @@ Streaming Speech and Transcription are not supported by the upstream OpenRouter 
 | Image Generation | Not offered by OpenRouter API |
 | Streaming Speech/TTS | Not offered by OpenRouter API |
 | Streaming Transcription/STT | Not offered by OpenRouter API |
-| Batch Operations | Not offered by OpenRouter API |
+| File-based Batching | OpenRouter's beta Batch API accepts inline requests only |
 | File Management | Not offered by OpenRouter API |
 
 ---

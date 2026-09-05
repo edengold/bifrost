@@ -137066,6 +137066,301 @@
           }
         }
       ]
+    },
+    {
+      "name": "60. OpenRouter Batch API (beta batches, inline requests)",
+      "description": "OpenRouter batch support routes Bifrost's generic OpenAI-style batch surface (/openai/v1/batches) to OpenRouter's beta Batch API (/api/beta/batches). Create accepts inline `requests` only (no input_file_id — OpenRouter has no file uploads) and a batch-level model; the `openrouter/` prefix and `:batch` suffix from /v1/models are stripped on submission. List/retrieve/cancel are wire-identical to OpenAI. Results come back inline on the completed batch object. All [PREVIEW]-tagged: needs a gateway OpenRouter provider key with 'Use for Batch APIs' enabled and OPENROUTER_API_KEY.",
+      "item": [
+        {
+          "name": "[PREVIEW] OpenRouter: create batch (inline requests)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"openrouter/openai/gpt-4o:batch\",\n  \"endpoint\": \"/v1/chat/completions\",\n  \"requests\": [\n    { \"custom_id\": \"or-harness-1\", \"body\": { \"model\": \"openrouter/openai/gpt-4o:batch\", \"messages\": [{ \"role\": \"user\", \"content\": \"Say hello in one word.\" }], \"max_tokens\": 8 } },\n    { \"custom_id\": \"or-harness-2\", \"body\": { \"messages\": [{ \"role\": \"user\", \"content\": \"Name the planet we live on.\" }], \"max_tokens\": 8 } }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/batches",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "batches"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Clear any stale id from a previous run so a guarded skip below (401/403/429/5xx)",
+                  "// can't leave 'OpenRouter: retrieve/cancel/results' chaining onto an old batch.",
+                  "pm.collectionVariables.unset('openrouterBatchId');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test('OpenRouter create batch: 2xx', function () { pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.below(300); });",
+                  "var j = pm.response.json();",
+                  "pm.test('OpenRouter create batch: object batch', function () { pm.expect(j.object).to.eql('batch'); });",
+                  "pm.test('OpenRouter create batch: has id', function () { pm.expect(j.id).to.be.a('string').and.not.empty; });",
+                  "pm.test('OpenRouter create batch: has status', function () { pm.expect(j.status).to.be.a('string').and.not.empty; });",
+                  "// The :batch-suffixed, provider-prefixed model must normalize to the bare slug on the wire.",
+                  "pm.test('OpenRouter create batch: model normalized', function () { pm.expect(j.model).to.eql('openai/gpt-4o'); });",
+                  "pm.test('OpenRouter create batch: request counts echo', function () { pm.expect(j.request_counts).to.be.an('object'); pm.expect(j.request_counts.total).to.eql(2); });",
+                  "if (typeof j.id === 'string' && j.id) { pm.collectionVariables.set('openrouterBatchId', j.id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[PREVIEW] OpenRouter: create batch rejects file upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"openrouter/openai/gpt-4o:batch\",\n  \"endpoint\": \"/v1/chat/completions\",\n  \"input_file_id\": \"file_nonexistent_123\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/batches",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "batches"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test('OpenRouter file-based batch: rejected with 4xx', function () { pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.within(400, 499); });",
+                  "var t = JSON.stringify(pm.response.json()).toLowerCase();",
+                  "pm.test('OpenRouter file-based batch: clear no-file-uploads error', function () { pm.expect(t).to.include('does not support file uploads'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[PREVIEW] OpenRouter: list batches",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/batches?provider=openrouter&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "batches"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "openrouter"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test('OpenRouter list batches: 2xx', function () { pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.below(300); });",
+                  "var j = pm.response.json();",
+                  "pm.test('OpenRouter list batches: object list', function () { pm.expect(j.object).to.eql('list'); });",
+                  "pm.test('OpenRouter list batches: data array', function () { pm.expect(j.data).to.be.an('array'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[PREVIEW] OpenRouter: retrieve batch",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/batches/{{openrouterBatchId}}?provider=openrouter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "batches",
+                "{{openrouterBatchId}}"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "openrouter"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('openrouterBatchId')) { return; }",
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test('OpenRouter retrieve batch: 2xx', function () { pm.expect(pm.response.code, 'failed: ' + pm.response.text()).to.be.below(300); });",
+                  "var j = pm.response.json();",
+                  "pm.test('OpenRouter retrieve batch: id round-trips', function () { pm.expect(j.id).to.eql(pm.collectionVariables.get('openrouterBatchId')); });",
+                  "pm.test('OpenRouter retrieve batch: has status', function () { pm.expect(j.status).to.be.a('string').and.not.empty; });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[PREVIEW] OpenRouter: cancel batch",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/batches/{{openrouterBatchId}}/cancel?provider=openrouter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "batches",
+                "{{openrouterBatchId}}",
+                "cancel"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "openrouter"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('openrouterBatchId')) { return; }",
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "// Cancel is OpenAI-shaped (POST /beta/batches/:id/cancel). A 4xx is acceptable",
+                  "// once the batch already reached a terminal status; anything else must be batch-shaped.",
+                  "if (pm.response.code >= 400) {",
+                  "    pm.test('OpenRouter cancel batch: error is provider-shaped', function () { pm.expect(pm.response.text().toLowerCase()).to.include('error'); });",
+                  "    return;",
+                  "}",
+                  "var j = pm.response.json();",
+                  "pm.test('OpenRouter cancel batch: object batch', function () { pm.expect(j.object).to.eql('batch'); });",
+                  "pm.test('OpenRouter cancel batch: status cancelling or cancelled', function () { pm.expect(['cancelling', 'cancelled']).to.include(j.status); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "[PREVIEW] OpenRouter: batch results",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/batches/{{openrouterBatchId}}/results?provider=openrouter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "batches",
+                "{{openrouterBatchId}}",
+                "results"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "openrouter"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.collectionVariables.get('openrouterBatchId')) { return; }",
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "// A freshly-submitted batch is not completed yet; the contract is either a",
+                  "// 2xx with an inline results array, or a 4xx that says results are not",
+                  "// available yet — never a route-not-found or unsupported-operation error.",
+                  "var j = pm.response.json();",
+                  "if (pm.response.code < 300) {",
+                  "    pm.test('OpenRouter batch results: results array present', function () { pm.expect(j.results).to.be.an('array'); });",
+                  "} else {",
+                  "    var t = JSON.stringify(j).toLowerCase();",
+                  "    pm.test('OpenRouter batch results: not-available reason given', function () { pm.expect(t).to.include('batch results not available'); });",
+                  "    pm.test('OpenRouter batch results: not unsupported', function () { pm.expect(t).to.not.include('unsupported'); });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

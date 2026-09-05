@@ -724,12 +724,13 @@ func BatchRequestType(endpoint schemas.BatchEndpoint) schemas.RequestType {
 type usageExtractor func(fallbackModel string, item schemas.BatchResultItem) (extractedUsage, error)
 
 var usageExtractors = map[schemas.ModelProvider]usageExtractor{
-	schemas.OpenAI:    extractResponseBodyUsage,
-	schemas.Azure:     extractResponseBodyUsage,
-	schemas.Bedrock:   extractResponseBodyUsage,
-	schemas.Gemini:    extractResponseBodyUsage,
-	schemas.Vertex:    extractResponseBodyUsage,
-	schemas.Anthropic: extractAnthropicUsage,
+	schemas.OpenAI:     extractResponseBodyUsage,
+	schemas.Azure:      extractResponseBodyUsage,
+	schemas.Bedrock:    extractResponseBodyUsage,
+	schemas.Gemini:     extractResponseBodyUsage,
+	schemas.Vertex:     extractResponseBodyUsage,
+	schemas.OpenRouter: extractResponseBodyUsage,
+	schemas.Anthropic:  extractAnthropicUsage,
 }
 
 func IsProviderSupported(provider schemas.ModelProvider) bool {
