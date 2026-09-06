@@ -113,9 +113,12 @@ jobs:
         uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.16.1
         with:
           egress-policy: block
-          # Same host set as release-pipeline.yml's docker-build-amd64: alpine
-          # apk + node/go module fetches inside the build, Docker Hub for the
-          # pinned base images, ghcr + its storage backend for the push.
+          # Same host set as release-pipeline.yml's docker-build-amd64 plus
+          # sum.golang.org: Dockerfile.local builds in go-workspace mode, and
+          # go.work.sum is gitignored — absent it, the toolchain verifies every
+          # module against the checksum DB, which harden-runner blocks without
+          # this line (observed: connection refused on sum.golang.org kills the
+          # go build inside the image build).
           allowed-endpoints: >
             auth.docker.io:443
             dl-cdn.alpinelinux.org:443
@@ -130,6 +133,7 @@ jobs:
             registry-1.docker.io:443
             registry.npmjs.org:443
             storage.googleapis.com:443
+            sum.golang.org:443
 
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -169,6 +173,8 @@ jobs:
         uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.16.1
         with:
           egress-policy: block
+          # See build-amd64: sum.golang.org is required for module verification
+          # inside the image build.
           allowed-endpoints: >
             auth.docker.io:443
             dl-cdn.alpinelinux.org:443
@@ -183,6 +189,7 @@ jobs:
             registry-1.docker.io:443
             registry.npmjs.org:443
             storage.googleapis.com:443
+            sum.golang.org:443
 
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
