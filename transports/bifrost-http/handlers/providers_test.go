@@ -15,6 +15,7 @@ import (
 	configstoreTables "github.com/maximhq/bifrost/framework/configstore/tables"
 	"github.com/maximhq/bifrost/framework/modelcatalog"
 	"github.com/maximhq/bifrost/framework/modelcatalog/datasheet"
+	"github.com/maximhq/bifrost/framework/modelcatalog/live"
 	governanceplugin "github.com/maximhq/bifrost/plugins/governance"
 	"github.com/maximhq/bifrost/transports/bifrost-http/lib"
 	"github.com/valyala/fasthttp"
@@ -1782,5 +1783,45 @@ func TestListModels_KeyBlacklistIsCaseInsensitive(t *testing.T) {
 		if strings.EqualFold(m.Name, "gpt-3.5-turbo") {
 			t.Fatalf("gpt-3.5-turbo should be blocked by blacklist, got %v", resp.Models)
 		}
+	}
+}
+
+// TestListModelDetails_LiveReasoningEfforts pins the /api/models/details
+// surface: provider-reported list-models effort levels are emitted as
+// reasoning_efforts, and rows without any report omit the key entirely.
+func TestListModelDetails_LiveReasoningEfforts(t *testing.T) {
+	SetLogger(&mockLogger{})
+
+	h := providerHandlerForTest(schemas.OpenAI, []schemas.Key{{ID: "key-a"}}, []string{"gpt-4o", "gpt-4o-mini"}, []string{"gpt-4o", "gpt-4o-mini"})
+	h.inMemoryStore.ModelCatalog = modelcatalog.NewTestCatalog(nil)
+	h.inMemoryStore.ModelCatalog.UpsertLive(schemas.OpenAI, "key-a", false, []string{"gpt-4o"}, map[string]*live.ModelMeta{
+		"gpt-4o": {ReasoningEffortLevels: []string{"minimal", "low", "medium", "high"}},
+	})
+
+	resp, body := listModelDetailsForTest(t, h, "/api/models/details?provider=openai&limit=100")
+	if len(resp.Models) != 2 {
+		t.Fatalf("expected two models, got %#v", resp.Models)
+	}
+
+	var reported, absent *ModelDetailsResponse
+	for i := range resp.Models {
+		switch resp.Models[i].Name {
+		case "gpt-4o":
+			reported = &resp.Models[i]
+		case "gpt-4o-mini":
+			absent = &resp.Models[i]
+		}
+	}
+	if reported == nil || absent == nil {
+		t.Fatalf("expected gpt-4o and gpt-4o-mini rows, got %#v", resp.Models)
+	}
+	if want := []string{"minimal", "low", "medium", "high"}; !slices.Equal(reported.ReasoningEfforts, want) {
+		t.Errorf("gpt-4o ReasoningEfforts = %v, want %v", reported.ReasoningEfforts, want)
+	}
+	if len(absent.ReasoningEfforts) != 0 {
+		t.Errorf("gpt-4o-mini ReasoningEfforts = %v, want none", absent.ReasoningEfforts)
+	}
+	if strings.Contains(body, "gpt-4o-mini") && strings.Count(body, "reasoning_efforts") != 1 {
+		t.Errorf("expected reasoning_efforts only on the reporting row: %s", body)
 	}
 }

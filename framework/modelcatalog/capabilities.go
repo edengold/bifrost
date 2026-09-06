@@ -2,6 +2,7 @@ package modelcatalog
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/maximhq/bifrost/core/schemas"
@@ -43,7 +44,7 @@ func (mc *ModelCatalog) GetModelCapabilities(provider schemas.ModelProvider, mod
 	}
 	key := lrucache.EncodeKey(string(provider), model)
 	if caps, ok := mc.capabilities.Get(key); ok {
-		return caps
+		return mc.withLiveReasoningEfforts(caps, provider, model)
 	}
 	if mc.loadCapabilities == nil {
 		return nil
@@ -62,5 +63,26 @@ func (mc *ModelCatalog) GetModelCapabilities(provider schemas.ModelProvider, mod
 		}
 		return nil
 	}
-	return caps
+	return mc.withLiveReasoningEfforts(caps, provider, model)
+}
+
+// withLiveReasoningEfforts returns a shallow copy of caps whose effort ladder
+// replaced by the provider's live-reported levels, or caps unchanged when the
+// live cache has none. The merged copy is never cached — the capability cache
+// is keyed without live state, so merging on every read keeps the result
+// current against the live refresher. Shallow copy is safe: records are
+// read-only downstream (ModelCaps only reads) and no other shared field is
+// mutated.
+func (mc *ModelCatalog) withLiveReasoningEfforts(caps *schemas.ModelCapabilities, provider schemas.ModelProvider, model string) *schemas.ModelCapabilities {
+	if caps == nil {
+		return nil
+	}
+	meta := mc.providerMeta(string(provider), model)
+	if meta == nil || len(meta.ReasoningEffortLevels) == 0 {
+		return caps
+	}
+	merged := *caps
+	merged.ReasoningEffortLevels = slices.Clone(meta.ReasoningEffortLevels)
+	merged.SupportsReasoningEffort = new(true)
+	return &merged
 }

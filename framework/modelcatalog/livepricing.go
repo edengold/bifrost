@@ -67,6 +67,10 @@ func overlayLiveModelInfo(model *schemas.Model, meta *live.ModelMeta) {
 	if len(meta.SupportedParameters) > 0 {
 		model.SupportedParameters = slices.Clone(meta.SupportedParameters)
 	}
+	if len(meta.ReasoningEffortLevels) > 0 {
+		// Provider ladder wins wholesale — no merge with the datasheet ladder.
+		model.Reasoning = &schemas.ModelReasoning{SupportedEfforts: slices.Clone(meta.ReasoningEffortLevels)}
+	}
 	p := meta.Pricing
 	if p == nil {
 		return

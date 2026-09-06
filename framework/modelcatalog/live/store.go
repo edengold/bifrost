@@ -50,6 +50,9 @@ type ModelMeta struct {
 	MaxOutputTokens     *int
 	SupportedParameters []string
 	Pricing             *PricingRates
+	// ReasoningEffortLevels are the effort labels the provider advertised for
+	// this model, ascending as published; nil when the provider reports none.
+	ReasoningEffortLevels []string
 }
 
 // PricingRates holds provider-advertised rates in USD per token/unit.

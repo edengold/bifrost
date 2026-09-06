@@ -137121,6 +137121,108 @@
           }
         }
       ]
+    },
+    {
+      "name": "61. Provider-Reported Reasoning Effort Levels (thinking ladder)",
+      "description": "Pins that thinking-effort ladders a provider advertises on its own /v1/models endpoint reach the client through Bifrost. OpenRouter publishes a top-level reasoning object with supported_efforts on ~300 models (descending, e.g. [max,xhigh,high,medium,low]); the OpenAI-compatible converter union-merges the llmgateway-style providers[].reasoning_efforts shape. The native /v1/models row pins the forward decode (schemas.Model.Reasoning); the OpenAI drop-in row pins the reverse conversion (ToOpenAIListModelsResponse), which dropped Reasoning before this change. Assertions are presence-based on the merged list, not per-model, so upstream catalog churn cannot false-fail the row.",
+      "item": [
+        {
+          "name": "OpenRouter: GET /v1/models carries reasoning.supported_efforts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models?provider=openrouter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "openrouter"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test(\"list-models succeeded\", function () {",
+                  "  pm.expect(pm.response.code, \"failed: \" + pm.response.text()).to.be.below(400);",
+                  "});",
+                  "pm.test(\"provider reasoning ladder survives the decode\", function () {",
+                  "  var j = pm.response.json();",
+                  "  var data = j.data || [];",
+                  "  pm.expect(data.length, \"no models returned\").to.be.greaterThan(0);",
+                  "  var withEfforts = 0;",
+                  "  for (var i = 0; i < data.length; i++) {",
+                  "    var r = data[i].reasoning;",
+                  "    if (r && r.supported_efforts && r.supported_efforts.length > 0) withEfforts++;",
+                  "  }",
+                  "  pm.expect(withEfforts, \"no entry carries reasoning.supported_efforts\").to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "OpenRouter via OpenAI drop-in: /openai/v1/models re-advertises reasoning.supported_efforts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-bf-model-provider",
+                "value": "openrouter"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/openai/v1/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "openai",
+                "v1",
+                "models"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test(\"drop-in list-models succeeded\", function () {",
+                  "  pm.expect(pm.response.code, \"failed: \" + pm.response.text()).to.be.below(400);",
+                  "});",
+                  "pm.test(\"reverse conversion preserves reasoning ladder\", function () {",
+                  "  var j = pm.response.json();",
+                  "  var data = j.data || [];",
+                  "  pm.expect(data.length, \"no models returned\").to.be.greaterThan(0);",
+                  "  var withEfforts = 0;",
+                  "  for (var i = 0; i < data.length; i++) {",
+                  "    var r = data[i].reasoning;",
+                  "    if (r && r.supported_efforts && r.supported_efforts.length > 0) withEfforts++;",
+                  "  }",
+                  "  pm.expect(withEfforts, \"no drop-in entry carries reasoning.supported_efforts (reverse conversion dropped it)\").to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

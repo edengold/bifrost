@@ -31,6 +31,27 @@ var effortLadder = []string{
 	ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax,
 }
 
+// SortReasoningEfforts returns a copy of an advertised effort ladder ordered
+// ascending, matching the ReasoningEffortLevels / SupportedEfforts invariant.
+// Providers do not agree on direction — llmgateway publishes ascending,
+// OpenRouter descending ("max","xhigh",...) — so capture normalizes. "none" is
+// the off switch, not a rung: it sorts below every real effort. Labels outside
+// the ladder keep their relative order at the end (stable).
+func SortReasoningEfforts(levels []string) []string {
+	out := slices.Clone(levels)
+	rank := func(level string) int {
+		if level == ReasoningEffortNone {
+			return -1
+		}
+		if idx := slices.Index(effortLadder, level); idx >= 0 {
+			return idx
+		}
+		return len(effortLadder)
+	}
+	slices.SortStableFunc(out, func(a, b string) int { return rank(a) - rank(b) })
+	return out
+}
+
 // SupportsReasoning reports whether the model reasons at all.
 func (c ModelCaps) SupportsReasoning(fallback bool) bool {
 	if c.record != nil && c.record.SupportsReasoning != nil {

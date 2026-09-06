@@ -91,3 +91,63 @@ func TestToBifrostListModelsResponse_ContextLengthWinsOverContextWindow(t *testi
 	require.NotNil(t, out.Data[0].ContextLength)
 	assert.Equal(t, 8192, *out.Data[0].ContextLength)
 }
+
+// TestToBifrostListModelsResponse_ReasoningEfforts pins both provider wire
+// shapes for thinking levels: the llmgateway-style per-provider
+// `providers[].reasoning_efforts` union and the OpenRouter-style top-level
+// `reasoning` object, plus absence → nil and reverse-conversion passthrough.
+func TestToBifrostListModelsResponse_ReasoningEfforts(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{"object":"list","data":[
+		{"id":"gpt-5","object":"model","providers":[
+			{"reasoning_efforts":["minimal","low","medium","high"]},
+			{"reasoning_efforts":["low","medium","high","xhigh"]}]},
+		{"id":"gemini-3-pro","object":"model","reasoning":{
+			"supported_efforts":["low","high"],"default_effort":"low","default_enabled":true}},
+		{"id":"plain-model","object":"model","providers":[{"reasoning_efforts":[]}]}
+	]}`)
+
+	var resp OpenAIListModelsResponse
+	require.NoError(t, sonic.Unmarshal(raw, &resp))
+
+	out := resp.ToBifrostListModelsResponse("llmgateway", nil, nil, nil, true)
+	require.Len(t, out.Data, 3)
+
+	// Ordered union across providers, provider order preserved, deduped.
+	union := out.Data[0]
+	require.NotNil(t, union.Reasoning)
+	assert.Equal(t, []string{"minimal", "low", "medium", "high", "xhigh"}, union.Reasoning.SupportedEfforts)
+
+	// Top-level reasoning object cloned through, other fields kept.
+	or := out.Data[1]
+	require.NotNil(t, or.Reasoning)
+	assert.Equal(t, []string{"low", "high"}, or.Reasoning.SupportedEfforts)
+	require.NotNil(t, or.Reasoning.DefaultEffort)
+	assert.Equal(t, "low", *or.Reasoning.DefaultEffort)
+	require.NotNil(t, or.Reasoning.DefaultEnabled)
+	assert.True(t, *or.Reasoning.DefaultEnabled)
+
+	// Neither shape → nil.
+	assert.Nil(t, out.Data[2].Reasoning)
+
+	// Entries must not alias the decoded payload.
+	resp.Data[0].Providers[0].ReasoningEfforts[0] = "mutated"
+	resp.Data[1].Reasoning.SupportedEfforts[0] = "mutated"
+	assert.Equal(t, "minimal", union.Reasoning.SupportedEfforts[0])
+	assert.Equal(t, "low", or.Reasoning.SupportedEfforts[0])
+
+	// Reverse conversion re-advertises Reasoning (the forward converter already
+	// flattened the providers[] union into entry.Reasoning).
+	back := ToOpenAIListModelsResponse(out)
+	require.Len(t, back.Data, 3)
+	require.NotNil(t, back.Data[0].Reasoning)
+	assert.Equal(t, []string{"minimal", "low", "medium", "high", "xhigh"}, back.Data[0].Reasoning.SupportedEfforts)
+	require.NotNil(t, back.Data[1].Reasoning)
+	assert.Equal(t, []string{"low", "high"}, back.Data[1].Reasoning.SupportedEfforts)
+	assert.Nil(t, back.Data[2].Reasoning)
+
+	// Clone discipline: mutating the reverse output must not touch the source.
+	back.Data[1].Reasoning.SupportedEfforts[0] = "mutated"
+	assert.Equal(t, "low", or.Reasoning.SupportedEfforts[0])
+}

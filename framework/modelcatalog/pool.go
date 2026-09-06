@@ -188,6 +188,12 @@ func modelMetaFromSchema(m *schemas.Model) *live.ModelMeta {
 		MaxOutputTokens:     m.MaxOutputTokens,
 		SupportedParameters: m.SupportedParameters,
 	}
+	if m.Reasoning != nil {
+		// Normalize to ascending at capture: providers publish both directions
+		// (OpenRouter descending, llmgateway ascending) and the capability
+		// ladder contract is ascending. Also gives the meta its own slice.
+		meta.ReasoningEffortLevels = schemas.SortReasoningEfforts(m.Reasoning.SupportedEfforts)
+	}
 	if m.Pricing != nil {
 		meta.Pricing = &live.PricingRates{
 			PromptPerToken:     parseRate(m.Pricing.Prompt),
@@ -200,7 +206,8 @@ func modelMetaFromSchema(m *schemas.Model) *live.ModelMeta {
 		}
 	}
 	if meta.ContextLength == nil && meta.MaxInputTokens == nil && meta.MaxOutputTokens == nil &&
-		len(meta.SupportedParameters) == 0 && meta.Pricing == nil {
+		len(meta.SupportedParameters) == 0 && meta.Pricing == nil &&
+		len(meta.ReasoningEffortLevels) == 0 {
 		return nil
 	}
 	return meta

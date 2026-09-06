@@ -2,12 +2,16 @@ package modelcatalog
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	providerUtils "github.com/maximhq/bifrost/core/providers/utils"
 
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/framework/lrucache"
+	"github.com/maximhq/bifrost/framework/modelcatalog/live"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // capabilityTestCatalog builds a catalog whose capability lookups are served by
@@ -185,6 +189,43 @@ func TestGetModelCapabilities_DoesNotCacheFailedLoads(t *testing.T) {
 	if calls != 2 {
 		t.Errorf("expected a retry after the failed load, got %d loads", calls)
 	}
+}
+
+// Provider-reported live effort levels replace the datasheet ladder on read:
+// the request path (ModelCaps.NormalizeReasoningEffort) must honour the
+// upstream ladder where the upstream reports one — without mutating or
+// polluting the cached datasheet record.
+func TestGetModelCapabilities_LiveEffortLevelsWin(t *testing.T) {
+	yes := true
+	mc, _ := capabilityTestCatalog(func(p schemas.ModelProvider, m string) *schemas.ModelCapabilities {
+		return &schemas.ModelCapabilities{
+			SupportsReasoningEffort: &yes,
+			ReasoningEffortLevels:   []string{"low", "medium", "high"},
+		}
+	})
+	mc.live = live.New(nil)
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-5"}, map[string]*live.ModelMeta{
+		"gpt-5": {ReasoningEffortLevels: []string{"minimal", "low", "medium", "high"}},
+	})
+
+	got := mc.GetModelCapabilities(schemas.OpenAI, "gpt-5")
+	require.NotNil(t, got)
+	assert.Equal(t, []string{"minimal", "low", "medium", "high"}, got.ReasoningEffortLevels)
+	require.NotNil(t, got.SupportsReasoningEffort)
+	assert.True(t, *got.SupportsReasoningEffort)
+
+	// The cached record stays datasheet-only — the merge is per-read.
+	cached, ok := mc.capabilities.Get(lrucache.EncodeKey(string(schemas.OpenAI), "gpt-5"))
+	require.True(t, ok)
+	assert.Equal(t, []string{"low", "medium", "high"}, cached.ReasoningEffortLevels)
+	if reflect.ValueOf(cached.ReasoningEffortLevels).Pointer() == reflect.ValueOf(got.ReasoningEffortLevels).Pointer() {
+		t.Error("merged ladder aliases the cached record")
+	}
+
+	// No live meta for this model → datasheet record returned as-is.
+	plain := mc.GetModelCapabilities(schemas.OpenAI, "other-model")
+	require.NotNil(t, plain)
+	assert.Equal(t, []string{"low", "medium", "high"}, plain.ReasoningEffortLevels)
 }
 
 // The capability resolver is process-global and closes over the catalog, so a
