@@ -7,6 +7,7 @@ import (
 	bifrost "github.com/maximhq/bifrost/core"
 	"github.com/maximhq/bifrost/core/schemas"
 	configstoreTables "github.com/maximhq/bifrost/framework/configstore/tables"
+	"github.com/maximhq/bifrost/framework/modelcatalog/live"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -5212,4 +5213,160 @@ func TestParseImageDimensions(t *testing.T) {
 		assert.Equal(t, 0, w, bad)
 		assert.Equal(t, 0, h, bad)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Provider-reported (live) pricing overlay
+// ---------------------------------------------------------------------------
+
+// liveMetaResolverFor returns a resolver handing out fixed meta for one model.
+func liveMetaResolverFor(model string, meta *live.ModelMeta) func(provider, m string) *live.ModelMeta {
+	return func(_, m string) *live.ModelMeta {
+		if m != model {
+			return nil
+		}
+		return meta
+	}
+}
+
+// TestResolvePricing_LiveOverlayWinsPerField pins the core merge: a rate the
+// provider reports replaces the datasheet field; a rate it omits falls through
+// to the datasheet row.
+func TestResolvePricing_LiveOverlayWinsPerField(t *testing.T) {
+	s := testStoreWithPricing(map[string]configstoreTables.TableModelPricing{
+		makeKey("glm-5.3-flash", "llmgateway", "chat"): {
+			Model:              "glm-5.3-flash",
+			Provider:           "llmgateway",
+			Mode:               "chat",
+			InputCostPerToken:  bifrost.Ptr(0.000005),
+			OutputCostPerToken: bifrost.Ptr(0.000015),
+		},
+	})
+	s.SetProviderMetaResolver(liveMetaResolverFor("glm-5.3-flash", &live.ModelMeta{
+		Pricing: &live.PricingRates{PromptPerToken: bifrost.Ptr(0.0000001)},
+	}))
+	t.Cleanup(func() { s.SetProviderMetaResolver(nil) })
+
+	pricing := s.resolvePricing(routingInfoFor("llmgateway", "glm-5.3-flash"), schemas.ChatCompletionRequest, LookupScopes{})
+	require.NotNil(t, pricing)
+	require.NotNil(t, pricing.InputCostPerToken)
+	assert.InDelta(t, 0.0000001, *pricing.InputCostPerToken, 1e-15, "provider-reported input rate must replace the datasheet rate")
+	require.NotNil(t, pricing.OutputCostPerToken)
+	assert.InDelta(t, 0.000015, *pricing.OutputCostPerToken, 1e-15, "unreported output rate must keep the datasheet value")
+}
+
+// TestResolvePricing_LiveZeroIsARealPrice pins the free-model case: a reported
+// "0" rate bills at zero, it does not fall through to the datasheet.
+func TestResolvePricing_LiveZeroIsARealPrice(t *testing.T) {
+	s := testStoreWithPricing(map[string]configstoreTables.TableModelPricing{
+		makeKey("free-model", "llmgateway", "chat"): {
+			Model:             "free-model",
+			Provider:          "llmgateway",
+			Mode:              "chat",
+			InputCostPerToken: bifrost.Ptr(0.000005),
+		},
+	})
+	s.SetProviderMetaResolver(liveMetaResolverFor("free-model", &live.ModelMeta{
+		Pricing: &live.PricingRates{PromptPerToken: bifrost.Ptr(0.0)},
+	}))
+	t.Cleanup(func() { s.SetProviderMetaResolver(nil) })
+
+	resp := makeChatResponse("llmgateway", "free-model", &schemas.BifrostLLMUsage{
+		PromptTokens: 1000, CompletionTokens: 0, TotalTokens: 1000,
+	})
+	assert.InDelta(t, 0.0, s.CalculateCost(resp, nil), 1e-12, "a reported zero must bill at zero")
+}
+
+// TestResolvePricing_LivePricesModelAbsentFromDatasheet pins the synthetic-row
+// case: the provider lists a model with rates, the datasheet never heard of it
+// — billing still works off the provider rates.
+func TestResolvePricing_LivePricesModelAbsentFromDatasheet(t *testing.T) {
+	s := testStoreWithPricing(nil)
+	s.SetProviderMetaResolver(liveMetaResolverFor("novel-model", &live.ModelMeta{
+		Pricing: &live.PricingRates{
+			PromptPerToken:     bifrost.Ptr(0.0000001),
+			CompletionPerToken: bifrost.Ptr(0.00000025),
+		},
+	}))
+	t.Cleanup(func() { s.SetProviderMetaResolver(nil) })
+
+	resp := makeChatResponse("llmgateway", "novel-model", &schemas.BifrostLLMUsage{
+		PromptTokens: 1000, CompletionTokens: 100, TotalTokens: 1100,
+	})
+	// 1000*1e-7 + 100*2.5e-7 = 1e-4 + 2.5e-5
+	assert.InDelta(t, 0.000125, s.CalculateCost(resp, nil), 1e-12)
+}
+
+// TestResolvePricing_LiveMetaWithoutRatesStaysUnpriced pins the guard against
+// metadata-only entries: context-length hints must not mint a pricing row for a
+// model nothing prices — that would report cost 0 as if it were a real price.
+func TestResolvePricing_LiveMetaWithoutRatesStaysUnpriced(t *testing.T) {
+	s := testStoreWithPricing(nil)
+	ctxLen := 4096
+	s.SetProviderMetaResolver(liveMetaResolverFor("hinted-model", &live.ModelMeta{
+		ContextLength: &ctxLen,
+	}))
+	t.Cleanup(func() { s.SetProviderMetaResolver(nil) })
+
+	pricing := s.resolvePricing(routingInfoFor("llmgateway", "hinted-model"), schemas.ChatCompletionRequest, LookupScopes{})
+	assert.Nil(t, pricing, "context-only live meta must not create a pricing row")
+}
+
+// TestResolvePricing_OverrideBeatsLiveMeta pins the precedence chain:
+// operator pricing overrides apply last and win over provider rates.
+func TestResolvePricing_OverrideBeatsLiveMeta(t *testing.T) {
+	s := testStoreWithPricing(map[string]configstoreTables.TableModelPricing{
+		makeKey("glm-5.3-flash", "llmgateway", "chat"): {
+			Model:              "glm-5.3-flash",
+			Provider:           "llmgateway",
+			Mode:               "chat",
+			InputCostPerToken:  bifrost.Ptr(0.000005),
+			OutputCostPerToken: bifrost.Ptr(0.000015),
+		},
+	})
+	s.SetProviderMetaResolver(liveMetaResolverFor("glm-5.3-flash", &live.ModelMeta{
+		Pricing: &live.PricingRates{PromptPerToken: bifrost.Ptr(0.0000001)},
+	}))
+	t.Cleanup(func() { s.SetProviderMetaResolver(nil) })
+
+	require.NoError(t, s.SetOverrides([]configstoreTables.TablePricingOverride{
+		{
+			ID:               "llmgateway-exact",
+			ScopeKind:        string(ScopeKindGlobal),
+			MatchType:        string(MatchTypeExact),
+			Pattern:          "glm-5.3-flash",
+			RequestTypes:     []schemas.RequestType{schemas.ChatCompletionRequest},
+			PricingPatchJSON: `{"input_cost_per_token":0.0000002}`,
+		},
+	}))
+
+	pricing := s.resolvePricing(routingInfoFor("llmgateway", "glm-5.3-flash"), schemas.ChatCompletionRequest, LookupScopes{Provider: "llmgateway"})
+	require.NotNil(t, pricing)
+	require.NotNil(t, pricing.InputCostPerToken)
+	assert.InDelta(t, 0.0000002, *pricing.InputCostPerToken, 1e-15, "operator override must beat both live meta and datasheet")
+}
+
+// TestResolvePricing_LiveKeepsTieredColumnsFromDatasheet pins that fields
+// providers never report via list-models (the >128k tier) survive the overlay.
+func TestResolvePricing_LiveKeepsTieredColumnsFromDatasheet(t *testing.T) {
+	s := testStoreWithPricing(map[string]configstoreTables.TableModelPricing{
+		makeKey("gpt-4o", "openai", "chat"): {
+			Model:                            "gpt-4o",
+			Provider:                         "openai",
+			Mode:                             "chat",
+			InputCostPerToken:                bifrost.Ptr(0.0000025),
+			InputCostPerTokenAbove128kTokens: bifrost.Ptr(0.00001),
+		},
+	})
+	s.SetProviderMetaResolver(liveMetaResolverFor("gpt-4o", &live.ModelMeta{
+		Pricing: &live.PricingRates{PromptPerToken: bifrost.Ptr(0.0000001)},
+	}))
+	t.Cleanup(func() { s.SetProviderMetaResolver(nil) })
+
+	pricing := s.resolvePricing(routingInfoFor(schemas.OpenAI, "gpt-4o"), schemas.ChatCompletionRequest, LookupScopes{})
+	require.NotNil(t, pricing)
+	require.NotNil(t, pricing.InputCostPerToken)
+	assert.InDelta(t, 0.0000001, *pricing.InputCostPerToken, 1e-15)
+	require.NotNil(t, pricing.InputCostPerTokenAbove128kTokens)
+	assert.InDelta(t, 0.00001, *pricing.InputCostPerTokenAbove128kTokens, 1e-15, "tier columns must stay from the datasheet row")
 }

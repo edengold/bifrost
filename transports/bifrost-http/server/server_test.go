@@ -640,7 +640,7 @@ func TestOnKeyUpdated_DisabledKeySkipsFetchButInvalidatesCache(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("custom-provider", "key-1", false, []string{"custom-provider/some-model"})
+	catalog.UpsertLive("custom-provider", "key-1", false, []string{"custom-provider/some-model"}, nil)
 
 	disabledKey := schemas.Key{ID: "key-1", Enabled: schemas.Ptr(false)}
 	server := &BifrostHTTPServer{
@@ -730,8 +730,8 @@ func TestReloadProvider_FailedRefetchKeepsPreviousCatalog(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("custom-provider", "key-1", false, []string{"some-model"})
-	catalog.UpsertLive("custom-provider", "key-1", true, []string{"some-model", "unlisted-model"})
+	catalog.UpsertLive("custom-provider", "key-1", false, []string{"some-model"}, nil)
+	catalog.UpsertLive("custom-provider", "key-1", true, []string{"some-model", "unlisted-model"}, nil)
 
 	server := newReloadProviderServer(catalog, "custom-provider", []schemas.Key{{ID: "key-1"}}, false)
 
@@ -759,10 +759,10 @@ func TestReloadProvider_PrunesRemovedAndDisabledKeys(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("custom-provider", "key-enabled", false, []string{"kept-model"})
-	catalog.UpsertLive("custom-provider", "key-disabled", false, []string{"disabled-model"})
-	catalog.UpsertLive("custom-provider", "key-removed", false, []string{"removed-model"})
-	catalog.UpsertLive("custom-provider", "key-removed", true, []string{"removed-model"})
+	catalog.UpsertLive("custom-provider", "key-enabled", false, []string{"kept-model"}, nil)
+	catalog.UpsertLive("custom-provider", "key-disabled", false, []string{"disabled-model"}, nil)
+	catalog.UpsertLive("custom-provider", "key-removed", false, []string{"removed-model"}, nil)
+	catalog.UpsertLive("custom-provider", "key-removed", true, []string{"removed-model"}, nil)
 
 	keys := []schemas.Key{
 		{ID: "key-enabled"},
@@ -793,7 +793,7 @@ func TestReloadProvider_KeylessProviderRetainsSentinelEntry(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("keyless-provider", "", false, []string{"keyless-model"})
+	catalog.UpsertLive("keyless-provider", "", false, []string{"keyless-model"}, nil)
 
 	server := newReloadProviderServer(catalog, "keyless-provider", nil, true)
 
@@ -815,7 +815,7 @@ func TestReloadProvider_NoKeysDropsEverything(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("custom-provider", "key-1", false, []string{"orphaned-model"})
+	catalog.UpsertLive("custom-provider", "key-1", false, []string{"orphaned-model"}, nil)
 
 	server := newReloadProviderServer(catalog, "custom-provider", nil, false)
 
@@ -844,8 +844,8 @@ func TestReloadProvider_ConcurrentReloadsAndReadsAreRaceFree(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("custom-provider", "key-1", false, []string{"some-model"})
-	catalog.UpsertLive("custom-provider", "key-1", true, []string{"some-model", "unlisted-model"})
+	catalog.UpsertLive("custom-provider", "key-1", false, []string{"some-model"}, nil)
+	catalog.UpsertLive("custom-provider", "key-1", true, []string{"some-model", "unlisted-model"}, nil)
 
 	server := newReloadProviderServer(catalog, "custom-provider", []schemas.Key{{ID: "key-1"}}, false)
 

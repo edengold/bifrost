@@ -29,7 +29,8 @@ func (mc *ModelCatalog) GetModelInfo(provider schemas.ModelProvider, model strin
 	if entry == nil {
 		entry = mc.datasheet.GetCapabilityEntry(model, provider)
 	}
-	if entry == nil {
+	meta := mc.GetLiveModelMeta(provider, model)
+	if entry == nil && meta == nil {
 		return nil
 	}
 
@@ -39,6 +40,8 @@ func (mc *ModelCatalog) GetModelInfo(provider schemas.ModelProvider, model strin
 	if params := mc.datasheet.GetSupportedParameters(model); len(params) > 0 {
 		info.SupportedParameters = params
 	}
+	// Provider-reported list-models data wins per-field over the datasheet.
+	overlayLiveModelInfo(info, meta)
 	return info
 }
 

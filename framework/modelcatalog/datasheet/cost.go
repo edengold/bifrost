@@ -8,6 +8,7 @@ import (
 
 	"github.com/maximhq/bifrost/core/schemas"
 	configstoreTables "github.com/maximhq/bifrost/framework/configstore/tables"
+	"github.com/maximhq/bifrost/framework/modelcatalog/live"
 )
 
 // CalculateCost calculates the cost of a Bifrost response.
@@ -1951,7 +1952,24 @@ func (s *Store) resolvePricing(routingInfo schemas.RoutingInfo, requestType sche
 		if candidate == "" {
 			continue
 		}
+		meta := s.resolveProviderMeta(catalogProvider, candidate)
 		base, exists := s.getBasePricing(candidate, catalogProvider, requestType)
+		if meta != nil && (exists || metaHasPricing(meta)) {
+			// Provider-reported list-models data wins per-field over the
+			// datasheet row; fields the provider doesn't report fall through to
+			// it. A model the provider lists (with rates) but the datasheet
+			// doesn't know gets a synthetic row from the overlay.
+			if !exists || base == nil {
+				base = &configstoreTables.TableModelPricing{
+					Model:    candidate,
+					Provider: catalogProvider,
+					Mode:     normalizeRequestType(requestType),
+				}
+			}
+			overlayProviderPricing(base, meta)
+			result, _ := s.applyPricingOverrides(overrideKey, requestType, *base, scopes)
+			return &result
+		}
 		if exists && base != nil {
 			result, _ := s.applyPricingOverrides(overrideKey, requestType, *base, scopes)
 			return &result
@@ -1968,6 +1986,60 @@ func (s *Store) resolvePricing(routingInfo schemas.RoutingInfo, requestType sche
 	}
 	s.logger.Debug("no pricing found for wire model %s and provider %s, skipping cost calculation", overrideKey, provider)
 	return nil
+}
+
+// metaHasPricing reports whether provider metadata carries at least one rate.
+// Metadata with only context/parameter hints must not mint a pricing row for a
+// model the datasheet doesn't price — an unpriced model stays unpriced.
+func metaHasPricing(meta *live.ModelMeta) bool {
+	if meta == nil || meta.Pricing == nil {
+		return false
+	}
+	p := meta.Pricing
+	return p.PromptPerToken != nil || p.CompletionPerToken != nil || p.CacheReadPerToken != nil ||
+		p.CacheWritePerToken != nil || p.PerRequest != nil || p.PerImage != nil || p.PerWebSearchQuery != nil
+}
+
+// overlayProviderPricing replaces fields on a datasheet row with
+// provider-reported list-models values, per-field: a non-nil meta field wins;
+// a reported zero (non-nil pointer to 0.0) is a real price and also wins.
+// Fields providers don't report via list-models — tiered (>128k/200k/272k),
+// batches, priority/ultrafast/flex — stay from the datasheet row.
+func overlayProviderPricing(row *configstoreTables.TableModelPricing, meta *live.ModelMeta) {
+	if meta.ContextLength != nil {
+		row.ContextLength = meta.ContextLength
+	}
+	if meta.MaxInputTokens != nil {
+		row.MaxInputTokens = meta.MaxInputTokens
+	}
+	if meta.MaxOutputTokens != nil {
+		row.MaxOutputTokens = meta.MaxOutputTokens
+	}
+	p := meta.Pricing
+	if p == nil {
+		return
+	}
+	if p.PromptPerToken != nil {
+		row.InputCostPerToken = p.PromptPerToken
+	}
+	if p.CompletionPerToken != nil {
+		row.OutputCostPerToken = p.CompletionPerToken
+	}
+	if p.CacheReadPerToken != nil {
+		row.CacheReadInputTokenCost = p.CacheReadPerToken
+	}
+	if p.CacheWritePerToken != nil {
+		row.CacheCreationInputTokenCost = p.CacheWritePerToken
+	}
+	if p.PerRequest != nil {
+		row.CostPerRequest = p.PerRequest
+	}
+	if p.PerImage != nil {
+		row.InputCostPerImage = p.PerImage
+	}
+	if p.PerWebSearchQuery != nil {
+		row.SearchContextCostPerQuery = p.PerWebSearchQuery
+	}
 }
 
 // getBasePricing looks up catalog pricing for the given model, provider, and request type.

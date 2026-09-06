@@ -24,7 +24,7 @@ func TestIsModelAllowedForProvider_ExplicitList(t *testing.T) {
 	// prefixed branch has something to match (ParseModelString only strips
 	// recognized provider prefixes, so this must be a real provider).
 	provider := schemas.OpenAI
-	mc.UpsertLive(provider, "k1", false, []string{"openai/gpt-4o", "gpt-4o"})
+	mc.UpsertLive(provider, "k1", false, []string{"openai/gpt-4o", "gpt-4o"}, nil)
 
 	cases := []struct {
 		name    string

@@ -35,6 +35,37 @@ type Key struct {
 // Entry is a single cached response.
 type Entry struct {
 	Models []string
+	// Meta is provider-reported per-model metadata keyed by bare model ID.
+	// May be nil. Callers MUST NOT mutate the map after handing it to an
+	// Upsert — the store keeps the reference, not a copy.
+	Meta map[string]*ModelMeta
+}
+
+// ModelMeta is provider-reported per-model metadata captured from a
+// list-models response. Pricing rates are USD per token/unit, parsed from the
+// provider's decimal-or-exponent string form; nil = not reported.
+type ModelMeta struct {
+	ContextLength       *int
+	MaxInputTokens      *int
+	MaxOutputTokens     *int
+	SupportedParameters []string
+	Pricing             *PricingRates
+	// ReasoningEffortLevels are the effort labels the provider advertised for
+	// this model, ascending as published; nil when the provider reports none.
+	ReasoningEffortLevels []string
+}
+
+// PricingRates holds provider-advertised rates in USD per token/unit.
+// A non-nil pointer to 0.0 is a real price (free models legitimately report
+// "0"); only nil means not reported.
+type PricingRates struct {
+	PromptPerToken     *float64 // pricing.prompt
+	CompletionPerToken *float64 // pricing.completion
+	CacheReadPerToken  *float64 // pricing.input_cache_read
+	CacheWritePerToken *float64 // pricing.input_cache_write
+	PerRequest         *float64 // pricing.request
+	PerImage           *float64 // pricing.image
+	PerWebSearchQuery  *float64 // pricing.web_search
 }
 
 type Store struct {
@@ -72,12 +103,14 @@ func New(logger schemas.Logger) *Store {
 // Upsert stores a successful fetch unconditionally. Use it for writes with no
 // in-flight window to lose a race in (seeding, tests); anything that fetches
 // from an upstream first should go through Generation + UpsertIfCurrent.
-func (s *Store) Upsert(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string) {
+// meta may be nil and is retained by reference — callers must not mutate it
+// afterwards.
+func (s *Store) Upsert(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*ModelMeta) {
 	cp := make([]string, len(models))
 	copy(cp, models)
 	k := Key{Provider: provider, KeyID: keyID, Unfiltered: unfiltered}
 	s.mu.Lock()
-	s.entries[k] = Entry{Models: cp}
+	s.entries[k] = Entry{Models: cp, Meta: meta}
 	s.mu.Unlock()
 	s.writeGen.Add(1)
 }
@@ -104,7 +137,9 @@ func (s *Store) Generation(provider schemas.ModelProvider) uint64 {
 // may be gone. Its Invalidate already ran, and no later pass re-fetches or
 // prunes a key that is no longer configured, so an unguarded commit would
 // advertise that key's models until the process restarted.
-func (s *Store) UpsertIfCurrent(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, gen uint64) bool {
+// meta may be nil and is retained by reference — callers must not mutate it
+// afterwards.
+func (s *Store) UpsertIfCurrent(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*ModelMeta, gen uint64) bool {
 	cp := make([]string, len(models))
 	copy(cp, models)
 	k := Key{Provider: provider, KeyID: keyID, Unfiltered: unfiltered}
@@ -113,7 +148,7 @@ func (s *Store) UpsertIfCurrent(provider schemas.ModelProvider, keyID string, un
 	if s.gen[provider] != gen {
 		return false
 	}
-	s.entries[k] = Entry{Models: cp}
+	s.entries[k] = Entry{Models: cp, Meta: meta}
 	s.writeGen.Add(1)
 	return true
 }
@@ -198,7 +233,8 @@ func (s *Store) UnfilteredModelsForProvider(provider schemas.ModelProvider) []st
 }
 
 // Snapshot returns a defensive copy of every entry for diagnostics. Slices
-// are copied; the returned map is independent of store state.
+// are copied; the returned map is independent of store state. Meta is copied
+// by reference (ModelMeta values are treated as immutable once upserted).
 func (s *Store) Snapshot() map[Key]Entry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -206,7 +242,39 @@ func (s *Store) Snapshot() map[Key]Entry {
 	for k, e := range s.entries {
 		cp := make([]string, len(e.Models))
 		copy(cp, e.Models)
-		out[k] = Entry{Models: cp}
+		out[k] = Entry{Models: cp, Meta: e.Meta}
+	}
+	return out
+}
+
+// MetaForProvider returns provider-reported metadata keyed by bare model ID,
+// merged across the provider's filtered entries (the effective allowed set).
+// Key IDs are iterated in sorted order and later keys overwrite same-model
+// entries, making the merge deterministic; per provider, one entry per model
+// is the norm anyway. Returns nil when the provider has no metadata.
+func (s *Store) MetaForProvider(provider schemas.ModelProvider) map[string]*ModelMeta {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	byKey := make(map[string]map[string]*ModelMeta)
+	for k, e := range s.entries {
+		if k.Provider != provider || k.Unfiltered || len(e.Meta) == 0 {
+			continue
+		}
+		byKey[k.KeyID] = e.Meta
+	}
+	if len(byKey) == 0 {
+		return nil
+	}
+	keyIDs := make([]string, 0, len(byKey))
+	for keyID := range byKey {
+		keyIDs = append(keyIDs, keyID)
+	}
+	slices.Sort(keyIDs)
+	out := make(map[string]*ModelMeta)
+	for _, keyID := range keyIDs {
+		for id, m := range byKey[keyID] {
+			out[id] = m
+		}
 	}
 	return out
 }

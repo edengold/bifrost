@@ -12,10 +12,10 @@ import (
 // and unknown namespace prefixes are left untouched.
 func TestRefineModelForProvider(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.Groq, "groq-key", false, []string{"openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b"})
-	mc.UpsertLive(schemas.OpenRouter, "or-key", false, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-5", "openrouter/auto"})
-	mc.UpsertLive(schemas.Perplexity, "pplx-key", false, []string{"perplexity/sonar", "anthropic/claude-opus-4-6"})
-	mc.UpsertLive(schemas.Replicate, "repl-key", false, []string{"anthropic/claude-4.5-sonnet", "meta/llama-3-8b", "black-forest-labs/flux-dev"})
+	mc.UpsertLive(schemas.Groq, "groq-key", false, []string{"openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b"}, nil)
+	mc.UpsertLive(schemas.OpenRouter, "or-key", false, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-5", "openrouter/auto"}, nil)
+	mc.UpsertLive(schemas.Perplexity, "pplx-key", false, []string{"perplexity/sonar", "anthropic/claude-opus-4-6"}, nil)
+	mc.UpsertLive(schemas.Replicate, "repl-key", false, []string{"anthropic/claude-4.5-sonnet", "meta/llama-3-8b", "black-forest-labs/flux-dev"}, nil)
 
 	cases := []struct {
 		name     string

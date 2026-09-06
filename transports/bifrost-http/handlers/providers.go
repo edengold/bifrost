@@ -668,6 +668,9 @@ type ModelDetailsResponse struct {
 	IsDeprecated         bool                  `json:"is_deprecated,omitempty"`
 	AdditionalAttributes map[string]string     `json:"additional_attributes,omitempty"`
 	AccessibleByKeys     []string              `json:"accessible_by_keys,omitempty"`
+	// ReasoningEfforts are the accepted thinking-effort labels, ascending.
+	// Provider-reported list-models levels win over the datasheet ladder.
+	ReasoningEfforts []string `json:"reasoning_efforts,omitempty"`
 
 	// OverriddenPricing carries the post-override value of each cost field the
 	// UI displays, and only for fields the applied override actually changes —
@@ -832,6 +835,42 @@ func (h *ProviderHandler) listModelDetails(ctx *fasthttp.RequestCtx) {
 			details.Architecture = capabilities.Architecture
 			details.IsDeprecated = capabilities.IsDeprecated
 			details.AdditionalAttributes = capabilities.AdditionalAttributes
+		}
+		// Effort ladder: GetModelCapabilities already prefers provider-reported
+		// live levels over the datasheet (Step 4 merge); the liveMeta block
+		// below re-asserts the same value for parity with the other fields.
+		if caps := modelCatalog.GetModelCapabilities(model.Provider, model.Name); caps != nil {
+			details.ReasoningEfforts = caps.ReasoningEffortLevels
+		}
+		// Provider-reported list-models data wins per-field over the datasheet
+		// row displayed above.
+		if liveMeta := modelCatalog.GetLiveModelMeta(model.Provider, model.Name); liveMeta != nil {
+			if liveMeta.ContextLength != nil {
+				details.ContextLength = liveMeta.ContextLength
+			}
+			if liveMeta.MaxInputTokens != nil {
+				details.MaxInputTokens = liveMeta.MaxInputTokens
+			}
+			if liveMeta.MaxOutputTokens != nil {
+				details.MaxOutputTokens = liveMeta.MaxOutputTokens
+			}
+			if len(liveMeta.ReasoningEffortLevels) > 0 {
+				details.ReasoningEfforts = liveMeta.ReasoningEffortLevels
+			}
+			if p := liveMeta.Pricing; p != nil {
+				if p.PromptPerToken != nil {
+					details.InputCostPerToken = p.PromptPerToken
+				}
+				if p.CompletionPerToken != nil {
+					details.OutputCostPerToken = p.CompletionPerToken
+				}
+				if p.CacheWritePerToken != nil {
+					details.CacheWriteCost = p.CacheWritePerToken
+				}
+				if p.CacheReadPerToken != nil {
+					details.CacheReadCost = p.CacheReadPerToken
+				}
+			}
 		}
 
 		// Resolve overrides against the mode the displayed base row came from

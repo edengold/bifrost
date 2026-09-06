@@ -10,6 +10,8 @@ import (
 	"github.com/maximhq/bifrost/framework/modelcatalog/datasheet"
 	"github.com/maximhq/bifrost/framework/modelcatalog/keyconfig"
 	"github.com/maximhq/bifrost/framework/modelcatalog/live"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestUpsertLiveFromResponse_NilRespIsNoop guards the API surface: handing a
@@ -19,7 +21,7 @@ import (
 // silently removing the provider's previously-fetched models from routing.
 func TestUpsertLiveFromResponse_NilRespIsNoop(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o", "o1"})
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o", "o1"}, nil)
 
 	mc.UpsertLiveFromResponse(schemas.OpenAI, "k1", false, nil)
 
@@ -67,7 +69,7 @@ func TestGetModelsForProvider_IncludesDeprecatedDatasheetModelsWhenLiveExists(t 
 		t.Fatalf("load pricing testdata: %v", err)
 	}
 	mc := NewTestCatalogWithDatasheet(ds)
-	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"live-model"})
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"live-model"}, nil)
 
 	got := mc.GetModelsForProvider(schemas.OpenAI)
 	slices.Sort(got)
@@ -144,7 +146,7 @@ func TestGetModelsForProvider_DeprecatedDatasheetModelsRespectAllowBlock(t *test
 				done:      make(chan struct{}),
 			}
 			mc.initCaches()
-			mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"live-model"})
+			mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"live-model"}, nil)
 
 			got := mc.GetModelsForProvider(schemas.OpenAI)
 			slices.Sort(got)
@@ -178,7 +180,7 @@ func TestGetModelsForProvider_PartialListModelsProviderUnionsDatasheet(t *testin
 	// Perplexity: live lists only a responses-API model; the unlisted "sonar"
 	// chat model must still be unioned in from the datasheet.
 	mcPerplexity := NewTestCatalogWithDatasheet(ds)
-	mcPerplexity.UpsertLive(schemas.Perplexity, "k1", false, []string{"listed-responses-model"})
+	mcPerplexity.UpsertLive(schemas.Perplexity, "k1", false, []string{"listed-responses-model"}, nil)
 	gotPerplexity := mcPerplexity.GetModelsForProvider(schemas.Perplexity)
 	slices.Sort(gotPerplexity)
 	wantPerplexity := []string{"listed-responses-model", "sonar"}
@@ -189,7 +191,7 @@ func TestGetModelsForProvider_PartialListModelsProviderUnionsDatasheet(t *testin
 	// OpenAI is not a partial-list-models provider: its non-deprecated unlisted
 	// datasheet model stays shadowed by the authoritative live list.
 	mcOpenAI := NewTestCatalogWithDatasheet(ds)
-	mcOpenAI.UpsertLive(schemas.OpenAI, "k1", false, []string{"live-model"})
+	mcOpenAI.UpsertLive(schemas.OpenAI, "k1", false, []string{"live-model"}, nil)
 	gotOpenAI := mcOpenAI.GetModelsForProvider(schemas.OpenAI)
 	slices.Sort(gotOpenAI)
 	wantOpenAI := []string{"live-model"}
@@ -288,9 +290,9 @@ func TestExtractModelIDs_Dedup(t *testing.T) {
 // for one (provider, keyID) pair in a single call.
 func TestInvalidateLive_DropsBothFiltersForKey(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"})
-	mc.UpsertLive(schemas.OpenAI, "k1", true, []string{"gpt-4o", "o1"})
-	mc.UpsertLive(schemas.OpenAI, "k2", false, []string{"o1"})
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"}, nil)
+	mc.UpsertLive(schemas.OpenAI, "k1", true, []string{"gpt-4o", "o1"}, nil)
+	mc.UpsertLive(schemas.OpenAI, "k2", false, []string{"o1"}, nil)
 
 	mc.InvalidateLive(schemas.OpenAI, "k1")
 
@@ -307,9 +309,9 @@ func TestInvalidateLive_DropsBothFiltersForKey(t *testing.T) {
 // forwarder clears every (keyID, mode) combination for the provider.
 func TestInvalidateLiveProvider_DropsAcrossKeys(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"})
-	mc.UpsertLive(schemas.OpenAI, "k2", false, []string{"o1"})
-	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"claude-sonnet"})
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"}, nil)
+	mc.UpsertLive(schemas.OpenAI, "k2", false, []string{"o1"}, nil)
+	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"claude-sonnet"}, nil)
 
 	mc.InvalidateLiveProvider(schemas.OpenAI)
 
@@ -330,7 +332,7 @@ func TestInvalidateLiveProvider_DropsAcrossKeys(t *testing.T) {
 // deleted key's models until the process restarted.
 func TestUpsertLiveFromResponseIfCurrent_DropsStaleFetch(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"})
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"}, nil)
 
 	gen := mc.LiveGeneration(schemas.OpenAI)
 	resp := &schemas.BifrostListModelsResponse{Data: []schemas.Model{{ID: "openai/gpt-4o"}}}
@@ -371,7 +373,7 @@ func TestUpsertLiveFromResponseIfCurrent_CommitsWhenUnchanged(t *testing.T) {
 // be able to clear a healthy entry.
 func TestUpsertLiveFromResponseIfCurrent_NilRespIsNoop(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"})
+	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-4o"}, nil)
 
 	if mc.UpsertLiveFromResponseIfCurrent(schemas.OpenAI, "k1", false, nil, mc.LiveGeneration(schemas.OpenAI)) {
 		t.Error("nil resp reported as a committed write")
@@ -379,4 +381,59 @@ func TestUpsertLiveFromResponseIfCurrent_NilRespIsNoop(t *testing.T) {
 	if got := mc.GetModelsForProvider(schemas.OpenAI); !slices.Equal(got, []string{"gpt-4o"}) {
 		t.Errorf("after nil-resp guarded upsert = %v, want [gpt-4o] (entry must survive)", got)
 	}
+}
+
+// TestExtractModelMeta_CachesEffortLadderOnly pins that a list-models entry
+// whose ONLY report is a reasoning-effort ladder still produces a live meta —
+// the all-fields-nil short-circuit must account for the new field, or providers
+// like llmgateway that publish efforts without context limits get dropped.
+func TestExtractModelMeta_CachesEffortLadderOnly(t *testing.T) {
+	resp := &schemas.BifrostListModelsResponse{
+		Data: []schemas.Model{
+			{ID: "openai/gpt-5", Reasoning: &schemas.ModelReasoning{
+				SupportedEfforts: []string{"minimal", "low", "medium", "high"},
+			}},
+			// OpenRouter publishes descending; capture must normalize to the
+			// ascending capability-ladder contract.
+			{ID: "openai/or-model", Reasoning: &schemas.ModelReasoning{
+				SupportedEfforts: []string{"max", "xhigh", "high", "medium", "low"},
+			}},
+			{ID: "openai/bare-model"},
+		},
+	}
+
+	meta := extractModelMeta(resp, schemas.OpenAI)
+	require.NotNil(t, meta["gpt-5"])
+	assert.Equal(t, []string{"minimal", "low", "medium", "high"}, meta["gpt-5"].ReasoningEffortLevels)
+	require.NotNil(t, meta["or-model"])
+	assert.Equal(t, []string{"low", "medium", "high", "xhigh", "max"}, meta["or-model"].ReasoningEffortLevels)
+	// Nothing reported → no entry.
+	assert.NotContains(t, meta, "bare-model")
+}
+
+// TestOverlayLiveModelInfo_ReasoningClones pins the display overlay: a live
+// ladder replaces any datasheet ladder wholesale, and the result is a clone —
+// mutating it must never touch the live cache entry.
+func TestOverlayLiveModelInfo_ReasoningClones(t *testing.T) {
+	levels := []string{"low", "medium", "high", "xhigh", "max"}
+	meta := &live.ModelMeta{ReasoningEffortLevels: levels}
+	model := &schemas.Model{ID: "gpt-5.6-sol", Reasoning: &schemas.ModelReasoning{
+		SupportedEfforts: []string{"low", "medium", "high"},
+	}}
+
+	overlayLiveModelInfo(model, meta)
+
+	require.NotNil(t, model.Reasoning)
+	assert.Equal(t, levels, model.Reasoning.SupportedEfforts)
+
+	model.Reasoning.SupportedEfforts[0] = "mutated"
+	assert.Equal(t, "low", levels[0], "overlay must clone, not alias the live cache")
+
+	// Empty ladder must not clobber a datasheet-sourced reasoning object.
+	model2 := &schemas.Model{ID: "m", Reasoning: &schemas.ModelReasoning{
+		SupportedEfforts: []string{"low"},
+	}}
+	overlayLiveModelInfo(model2, &live.ModelMeta{})
+	require.NotNil(t, model2.Reasoning)
+	assert.Equal(t, []string{"low"}, model2.Reasoning.SupportedEfforts)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/maximhq/bifrost/core/schemas"
 	"github.com/maximhq/bifrost/framework/configstore"
 	configstoreTables "github.com/maximhq/bifrost/framework/configstore/tables"
+	"github.com/maximhq/bifrost/framework/modelcatalog/live"
 )
 
 // Defaults for sync configuration and timeouts. Exposed so the composer can
@@ -87,6 +88,35 @@ type Store struct {
 	modelParametersURL string
 	syncInterval       time.Duration
 	lastSyncedAt       time.Time
+
+	// providerMetaResolver is installed by the composer (ModelCatalog.Init) so
+	// the cost path can consult provider-reported list-models data without the
+	// datasheet owning the live cache. Returns nil when no live metadata exists
+	// for (provider, model). Guarded by its own mutex — the hot cost path takes
+	// mu.RLock and this read independently, mirroring overridesMu.
+	providerMetaMu       sync.RWMutex
+	providerMetaResolver func(provider, model string) *live.ModelMeta
+}
+
+// SetProviderMetaResolver installs (or, with nil, removes) the hook the cost
+// path consults for provider-reported per-model metadata. Nil means the
+// feature is inert — pure datasheet pricing, as before the hook existed.
+func (s *Store) SetProviderMetaResolver(fn func(provider, model string) *live.ModelMeta) {
+	s.providerMetaMu.Lock()
+	s.providerMetaResolver = fn
+	s.providerMetaMu.Unlock()
+}
+
+// resolveProviderMeta safely reads the installed resolver. Returns nil when
+// no resolver is installed or when it has no live data for (provider, model).
+func (s *Store) resolveProviderMeta(provider, model string) *live.ModelMeta {
+	s.providerMetaMu.RLock()
+	fn := s.providerMetaResolver
+	s.providerMetaMu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(provider, model)
 }
 
 // New constructs a Store with the given config. The store is empty; callers
