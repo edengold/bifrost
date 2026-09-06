@@ -295,3 +295,88 @@ func TestApplyModelInfoNilSafe(t *testing.T) {
 		t.Errorf("CalculateRequestCost on nil catalog = %v, want 0", got)
 	}
 }
+
+// fptr and iptr are local shorthands; this file predates the helpers package.
+func fptr(v float64) *float64 { return &v }
+func iptr(v int) *int          { return &v }
+
+// TestGetModelInfoLiveOnlyModelIsResolvable pins the fall-through: a model the
+// datasheet never heard of but a provider lists (with metadata) must return
+// non-nil info carrying the provider's rates. Before the overlay, the double
+// datasheet miss returned nil.
+func TestGetModelInfoLiveOnlyModelIsResolvable(t *testing.T) {
+	mc := modelInfoCatalog(t)
+	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"glm-5.3-flash"}, map[string]*live.ModelMeta{
+		"glm-5.3-flash": {
+			ContextLength: iptr(1048576),
+			Pricing:       &live.PricingRates{PromptPerToken: fptr(1e-7), CompletionPerToken: fptr(2.5e-7)},
+		},
+	})
+
+	info := mc.GetModelInfo(schemas.Anthropic, "glm-5.3-flash")
+	if info == nil {
+		t.Fatal("GetModelInfo = nil for a live-only model, want provider-sourced info")
+	}
+	if info.ContextLength == nil || *info.ContextLength != 1048576 {
+		t.Errorf("ContextLength = %v, want 1048576", info.ContextLength)
+	}
+	if info.Pricing == nil || info.Pricing.Prompt == nil || *info.Pricing.Prompt != "0.0000001000" {
+		t.Errorf("Pricing.Prompt = %v, want provider rate 0.0000001000", info.Pricing)
+	}
+	if info.Pricing.Completion == nil || *info.Pricing.Completion != "0.0000002500" {
+		t.Errorf("Pricing.Completion = %v, want 0.0000002500", info.Pricing.Completion)
+	}
+	// Output limits the provider didn't report stay nil (nothing backfills a
+	// model the datasheet has no row for).
+	if info.MaxOutputTokens != nil {
+		t.Errorf("MaxOutputTokens = %v, want nil (provider did not report it)", info.MaxOutputTokens)
+	}
+}
+
+// TestGetModelInfoLiveOverlayWinsPerField pins the merge against a real
+// datasheet row: the provider's context length replaces the datasheet value,
+// fields it doesn't report fall back to the datasheet.
+func TestGetModelInfoLiveOverlayWinsPerField(t *testing.T) {
+	mc := modelInfoCatalog(t)
+	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"claude-opus-5"}, map[string]*live.ModelMeta{
+		"claude-opus-5": {ContextLength: iptr(1000000)},
+	})
+
+	info := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5")
+	if info == nil {
+		t.Fatal("GetModelInfo = nil, want populated model")
+	}
+	if info.ContextLength == nil || *info.ContextLength != 1000000 {
+		t.Errorf("ContextLength = %v, want live 1000000 to replace the datasheet's 200000 fallback", info.ContextLength)
+	}
+	// Not reported by the provider → datasheet values survive.
+	if info.MaxOutputTokens == nil || *info.MaxOutputTokens != 64000 {
+		t.Errorf("MaxOutputTokens = %v, want datasheet 64000", info.MaxOutputTokens)
+	}
+	if info.Pricing == nil || info.Pricing.Prompt == nil || *info.Pricing.Prompt != "0.0000050000" {
+		t.Errorf("Pricing.Prompt = %v, want datasheet 0.0000050000", info.Pricing)
+	}
+}
+
+// TestGetModelInfoLiveOverlayClonesPointers guards the catalog-state invariant
+// from ApplyModelInfo: overlaid values must not hand callers a live-cache
+// handle.
+func TestGetModelInfoLiveOverlayClonesPointers(t *testing.T) {
+	mc := modelInfoCatalog(t)
+	ctxLen := 512
+	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"claude-opus-5"}, map[string]*live.ModelMeta{
+		"claude-opus-5": {ContextLength: &ctxLen},
+	})
+
+	info := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5")
+	if info == nil || info.ContextLength == nil {
+		t.Fatal("GetModelInfo = nil or ContextLength = nil, want overlaid value")
+	}
+	if info.ContextLength == &ctxLen {
+		t.Fatal("ContextLength aliases the live cache's pointer, want a clone")
+	}
+	*info.ContextLength = 999
+	if got := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5"); got.ContextLength == nil || *got.ContextLength != 512 {
+		t.Errorf("mutating returned info corrupted the live cache: %v", got.ContextLength)
+	}
+}

@@ -833,6 +833,33 @@ func (h *ProviderHandler) listModelDetails(ctx *fasthttp.RequestCtx) {
 			details.IsDeprecated = capabilities.IsDeprecated
 			details.AdditionalAttributes = capabilities.AdditionalAttributes
 		}
+		// Provider-reported list-models data wins per-field over the datasheet
+		// row displayed above.
+		if liveMeta := modelCatalog.GetLiveModelMeta(model.Provider, model.Name); liveMeta != nil {
+			if liveMeta.ContextLength != nil {
+				details.ContextLength = liveMeta.ContextLength
+			}
+			if liveMeta.MaxInputTokens != nil {
+				details.MaxInputTokens = liveMeta.MaxInputTokens
+			}
+			if liveMeta.MaxOutputTokens != nil {
+				details.MaxOutputTokens = liveMeta.MaxOutputTokens
+			}
+			if p := liveMeta.Pricing; p != nil {
+				if p.PromptPerToken != nil {
+					details.InputCostPerToken = p.PromptPerToken
+				}
+				if p.CompletionPerToken != nil {
+					details.OutputCostPerToken = p.CompletionPerToken
+				}
+				if p.CacheWritePerToken != nil {
+					details.CacheWriteCost = p.CacheWritePerToken
+				}
+				if p.CacheReadPerToken != nil {
+					details.CacheReadCost = p.CacheReadPerToken
+				}
+			}
+		}
 
 		// Resolve overrides against the mode the displayed base row came from
 		// (usually chat, but embedding/responses for those models) so an

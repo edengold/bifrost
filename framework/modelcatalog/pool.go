@@ -5,24 +5,28 @@
 package modelcatalog
 
 import (
+	"strconv"
+
 	"github.com/maximhq/bifrost/core/schemas"
+	"github.com/maximhq/bifrost/framework/modelcatalog/live"
 )
 
 // UpsertLive caches one (provider, keyID, unfiltered) list-models response.
-func (mc *ModelCatalog) UpsertLive(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string) {
-	mc.live.Upsert(provider, keyID, unfiltered, models)
+// meta may be nil and is retained by reference.
+func (mc *ModelCatalog) UpsertLive(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*live.ModelMeta) {
+	mc.live.Upsert(provider, keyID, unfiltered, models, meta)
 }
 
-// UpsertLiveFromResponse extracts model IDs from a BifrostListModelsResponse
-// (parsing "provider/model" prefixes, filtering by provider match,
-// deduplicating) and pushes them into the live cache. A nil resp is a no-op
-// so callers can't accidentally clear an existing cache entry by handing in
-// a missing response.
+// UpsertLiveFromResponse extracts model IDs and provider-reported metadata
+// from a BifrostListModelsResponse (parsing "provider/model" prefixes,
+// filtering by provider match, deduplicating) and pushes them into the live
+// cache. A nil resp is a no-op so callers can't accidentally clear an
+// existing cache entry by handing in a missing response.
 func (mc *ModelCatalog) UpsertLiveFromResponse(provider schemas.ModelProvider, keyID string, unfiltered bool, resp *schemas.BifrostListModelsResponse) {
 	if resp == nil {
 		return
 	}
-	mc.live.Upsert(provider, keyID, unfiltered, extractModelIDs(resp, provider))
+	mc.live.Upsert(provider, keyID, unfiltered, extractModelIDs(resp, provider), extractModelMeta(resp, provider))
 }
 
 // LiveGeneration returns the live cache's invalidation counter for the
@@ -42,7 +46,7 @@ func (mc *ModelCatalog) UpsertLiveFromResponseIfCurrent(provider schemas.ModelPr
 	if resp == nil {
 		return false
 	}
-	return mc.live.UpsertIfCurrent(provider, keyID, unfiltered, extractModelIDs(resp, provider), gen)
+	return mc.live.UpsertIfCurrent(provider, keyID, unfiltered, extractModelIDs(resp, provider), extractModelMeta(resp, provider), gen)
 }
 
 // InvalidateLive drops both filtered + unfiltered live entries for one key.
@@ -137,4 +141,80 @@ func extractModelIDs(resp *schemas.BifrostListModelsResponse, provider schemas.M
 		out = append(out, parsedModel)
 	}
 	return out
+}
+
+// extractModelMeta flattens a list-models response into provider-reported
+// per-model metadata keyed by bare model ID. Same key parsing and
+// first-entry-wins dedup as extractModelIDs. Entries carrying no metadata are
+// skipped, so the result is nil when a provider reports nothing.
+//
+// pricing.internal_reasoning is intentionally dropped: TableModelPricing has
+// no column for it, and this is the single mapping point.
+func extractModelMeta(resp *schemas.BifrostListModelsResponse, provider schemas.ModelProvider) map[string]*live.ModelMeta {
+	if resp == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(resp.Data))
+	var out map[string]*live.ModelMeta
+	for _, m := range resp.Data {
+		parsedProvider, parsedModel := schemas.ParseModelString(m.ID, "")
+		if parsedProvider != "" && parsedProvider != provider {
+			continue
+		}
+		if _, ok := seen[parsedModel]; ok {
+			continue
+		}
+		meta := modelMetaFromSchema(&m)
+		if meta == nil {
+			continue
+		}
+		seen[parsedModel] = struct{}{}
+		if out == nil {
+			out = make(map[string]*live.ModelMeta, len(resp.Data))
+		}
+		out[parsedModel] = meta
+	}
+	return out
+}
+
+// modelMetaFromSchema converts one list-models entry to live metadata,
+// returning nil when the entry reports nothing worth caching. Rate strings
+// parse with strconv.ParseFloat; empty or unparseable → nil (not reported),
+// "0" → non-nil 0.0 (a real price).
+func modelMetaFromSchema(m *schemas.Model) *live.ModelMeta {
+	meta := &live.ModelMeta{
+		ContextLength:       m.ContextLength,
+		MaxInputTokens:      m.MaxInputTokens,
+		MaxOutputTokens:     m.MaxOutputTokens,
+		SupportedParameters: m.SupportedParameters,
+	}
+	if m.Pricing != nil {
+		meta.Pricing = &live.PricingRates{
+			PromptPerToken:     parseRate(m.Pricing.Prompt),
+			CompletionPerToken: parseRate(m.Pricing.Completion),
+			CacheReadPerToken:  parseRate(m.Pricing.InputCacheRead),
+			CacheWritePerToken: parseRate(m.Pricing.InputCacheWrite),
+			PerRequest:         parseRate(m.Pricing.Request),
+			PerImage:           parseRate(m.Pricing.Image),
+			PerWebSearchQuery:  parseRate(m.Pricing.WebSearch),
+		}
+	}
+	if meta.ContextLength == nil && meta.MaxInputTokens == nil && meta.MaxOutputTokens == nil &&
+		len(meta.SupportedParameters) == 0 && meta.Pricing == nil {
+		return nil
+	}
+	return meta
+}
+
+// parseRate converts a provider-advertised rate string to a float pointer.
+// nil/empty/unparseable → nil; "0" → &0.0 (zero is a real price).
+func parseRate(s *string) *float64 {
+	if s == nil || *s == "" {
+		return nil
+	}
+	f, err := strconv.ParseFloat(*s, 64)
+	if err != nil {
+		return nil
+	}
+	return &f
 }

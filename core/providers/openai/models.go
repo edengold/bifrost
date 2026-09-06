@@ -39,6 +39,22 @@ func (response *OpenAIListModelsResponse) ToBifrostListModelsResponse(providerKe
 				OwnedBy:       schemas.Ptr(model.OwnedBy),
 				ContextLength: model.ContextWindow,
 			}
+			// Provider-reported metadata wins over the GROQ-style context_window
+			// fallback; keep ContextWindow mapping for providers that only emit it.
+			if model.ContextLength != nil {
+				entry.ContextLength = model.ContextLength
+			}
+			if model.MaxOutputTokens != nil {
+				entry.MaxOutputTokens = model.MaxOutputTokens
+			}
+			if len(model.SupportedParameters) > 0 {
+				entry.SupportedParameters = model.SupportedParameters
+			}
+			if model.Pricing != nil {
+				// Clone so entries never alias the decoded struct.
+				pricing := *model.Pricing
+				entry.Pricing = &pricing
+			}
 			if result.AliasValue != "" {
 				entry.Alias = schemas.Ptr(result.AliasValue)
 			}

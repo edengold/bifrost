@@ -1012,6 +1012,12 @@ type OpenAIModel struct {
 	// GROQ specific fields
 	Active        *bool `json:"active,omitempty"`
 	ContextWindow *int  `json:"context_window,omitempty"`
+
+	// Provider metadata (OpenRouter/llmgateway/vLLM-style /v1/models payloads).
+	ContextLength       *int             `json:"context_length,omitempty"`
+	MaxOutputTokens     *int             `json:"max_output,omitempty"`
+	SupportedParameters []string         `json:"supported_parameters,omitempty"`
+	Pricing             *schemas.Pricing `json:"pricing,omitempty"`
 }
 
 // OpenAIListModelsResponse represents an OpenAI list models response

@@ -137066,6 +137066,61 @@
           }
         }
       ]
+    },
+    {
+      "name": "60. Provider-Reported List-Models Metadata (context_length / pricing)",
+      "description": "Pins that per-model metadata a provider reports on its own /v1/models endpoint (context_length, max_output, pricing, supported_parameters — the OpenRouter/llmgateway/vLLM convention) survives Bifrost decode and reaches the client. Before this change OpenAIModel decoded only id/created/owned_by/context_window and every other field was dropped at core/providers/openai/models.go. OpenRouter is the always-available provider whose upstream reports the full shape. Assertions are presence-based on the merged list, not per-model, so upstream catalog churn cannot false-fail the row.",
+      "item": [
+        {
+          "name": "OpenRouter: GET /v1/models carries provider context_length and pricing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if ([401, 403, 429, 500, 502, 503, 504].indexOf(pm.response.code) !== -1) { return; }",
+                  "pm.test(\"list-models succeeded\", function () {",
+                  "  pm.expect(pm.response.code, \"failed: \" + pm.response.text()).to.be.below(400);",
+                  "});",
+                  "pm.test(\"provider metadata survives the decode\", function () {",
+                  "  var j = pm.response.json();",
+                  "  var data = j.data || [];",
+                  "  pm.expect(data.length, \"no models returned\").to.be.greaterThan(0);",
+                  "  var withCtx = 0, withPricing = 0;",
+                  "  for (var i = 0; i < data.length; i++) {",
+                  "    if (data[i].context_length > 0) withCtx++;",
+                  "    if (data[i].pricing && data[i].pricing.prompt !== undefined) withPricing++;",
+                  "  }",
+                  "  pm.expect(withCtx, \"no entry carries provider context_length\").to.be.greaterThan(0);",
+                  "  pm.expect(withPricing, \"no entry carries provider pricing\").to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models?provider=openrouter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "openrouter"
+                }
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }

@@ -131,6 +131,13 @@ func Init(ctx context.Context, config *Config, configStore configstore.ConfigSto
 	providerUtils.SetCapabilityResolver(mc.GetModelCapabilities)
 	mc.datasheet.SetOnModelParametersApplied(mc.capabilities.Flush)
 
+	// Cost lookups consult provider-reported list-models data through this
+	// hook: live meta wins per-field over the datasheet row. Like the
+	// capability resolver it closes over mc, so the failure defer below and
+	// Cleanup must remove it — otherwise a discarded catalog keeps billing off
+	// its stale live cache.
+	mc.datasheet.SetProviderMetaResolver(mc.providerMeta)
+
 	// If Init returns an error the caller never owns mc and will never call
 	// Cleanup(), so cancel syncCtx to stop any background goroutines that
 	// were already spawned before the failure.
@@ -142,6 +149,7 @@ func Init(ctx context.Context, config *Config, configStore configstore.ConfigSto
 			// catalog the caller discarded — and the loader builds its own
 			// context, so cancelling syncCtx does not stop it.
 			providerUtils.SetCapabilityResolver(nil)
+			mc.datasheet.SetProviderMetaResolver(nil)
 			mc.syncCancel()
 		}
 	}()
@@ -415,6 +423,12 @@ func (mc *ModelCatalog) Cleanup() error {
 	// lookups would otherwise keep running against a torn-down catalog. With no
 	// resolver installed every gate falls back to name detection.
 	providerUtils.SetCapabilityResolver(nil)
+	// Same reasoning for the cost path: with the catalog torn down, live-meta
+	// lookups must stop reaching mc.live; costs fall back to pure datasheet.
+	// datasheet is nil in hand-built test catalogs.
+	if mc.datasheet != nil {
+		mc.datasheet.SetProviderMetaResolver(nil)
+	}
 	if mc.syncCancel != nil {
 		mc.syncCancel()
 	}
