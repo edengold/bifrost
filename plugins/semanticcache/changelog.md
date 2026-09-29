@@ -1,2 +1,1 @@
-- feat: add a no-op `HTTPTransportPreAuthHook` for the new pre-authentication transport phase (#6375)
-- chore: upgraded core to v1.8.0 and framework to v1.6.0
+- chore: upgraded core to v1.11.0 and framework to v1.7.5
