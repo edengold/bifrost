@@ -1165,8 +1165,8 @@ func TestReloadProvider_KeylessPrunesResidualKeyEntries(t *testing.T) {
 	defer func() { logger = prevLogger }()
 
 	catalog := modelcatalog.NewTestCatalog(nil)
-	catalog.UpsertLive("keyless-provider", "", false, []string{"keyless-model"})
-	catalog.UpsertLive("keyless-provider", "residual-key", false, []string{"residual-model"})
+	catalog.UpsertLive("keyless-provider", "", false, []string{"keyless-model"}, nil)
+	catalog.UpsertLive("keyless-provider", "residual-key", false, []string{"residual-model"}, nil)
 
 	server := newReloadProviderServer(catalog, "keyless-provider", []schemas.Key{{ID: "residual-key"}}, true)
 

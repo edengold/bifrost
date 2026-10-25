@@ -103,7 +103,7 @@ func TestGetUnfilteredModelsForProvider_CloudflareUsesListModelsOnly(t *testing.
 	}
 	mc := NewTestCatalogWithDatasheet(ds)
 	live := []string{"@cf/cloudflare/clef", "@cf/meta/llama-3.1-8b-instruct-fp8"}
-	mc.UpsertLive(schemas.Cloudflare, "k1", true, live)
+	mc.UpsertLive(schemas.Cloudflare, "k1", true, live, nil)
 
 	if got := mc.GetUnfilteredModelsForProvider(schemas.Cloudflare); !slices.Equal(got, live) {
 		t.Errorf("GetUnfilteredModelsForProvider(Cloudflare) = %v, want %v", got, live)
