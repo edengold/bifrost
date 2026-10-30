@@ -39,6 +39,9 @@ type Entry struct {
 	// May be nil. Callers MUST NOT mutate the map after handing it to an
 	// Upsert — the store keeps the reference, not a copy.
 	Meta map[string]*ModelMeta
+	// Created is provider-reported creation time in Unix seconds; untimed
+	// models are absent. Owned by the store after Upsert.
+	Created map[string]int64
 }
 
 // ModelMeta is provider-reported per-model metadata captured from a
@@ -66,6 +69,10 @@ type PricingRates struct {
 	PerRequest         *float64 // pricing.request
 	PerImage           *float64 // pricing.image
 	PerWebSearchQuery  *float64 // pricing.web_search
+=======
+	Models  []string
+	Created map[string]int64 // provider-reported creation time in Unix seconds; untimed models are absent
+>>>>>>> e869c3f9adc96ea53c38694a21bb04a8e1085487
 }
 
 type Store struct {
@@ -103,14 +110,10 @@ func New(logger schemas.Logger) *Store {
 // Upsert stores a successful fetch unconditionally. Use it for writes with no
 // in-flight window to lose a race in (seeding, tests); anything that fetches
 // from an upstream first should go through Generation + UpsertIfCurrent.
-// meta may be nil and is retained by reference — callers must not mutate it
-// afterwards.
-func (s *Store) Upsert(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*ModelMeta) {
 	cp := make([]string, len(models))
 	copy(cp, models)
 	k := Key{Provider: provider, KeyID: keyID, Unfiltered: unfiltered}
 	s.mu.Lock()
-	s.entries[k] = Entry{Models: cp, Meta: meta}
 	s.mu.Unlock()
 	s.writeGen.Add(1)
 }
@@ -129,7 +132,8 @@ func (s *Store) Generation(provider schemas.ModelProvider) uint64 {
 }
 
 // UpsertIfCurrent stores a fetch only if nothing invalidated the provider
-// since gen was read, and reports whether it wrote.
+// since gen was read, and reports whether it wrote. Like Upsert, it copies
+// models and takes ownership of created.
 //
 // This is what keeps a deleted or disabled key's models from being resurrected
 // by a fetch that outlived it. The background refresher works from a key
@@ -137,9 +141,6 @@ func (s *Store) Generation(provider schemas.ModelProvider) uint64 {
 // may be gone. Its Invalidate already ran, and no later pass re-fetches or
 // prunes a key that is no longer configured, so an unguarded commit would
 // advertise that key's models until the process restarted.
-// meta may be nil and is retained by reference — callers must not mutate it
-// afterwards.
-func (s *Store) UpsertIfCurrent(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*ModelMeta, gen uint64) bool {
 	cp := make([]string, len(models))
 	copy(cp, models)
 	k := Key{Provider: provider, KeyID: keyID, Unfiltered: unfiltered}
@@ -148,7 +149,6 @@ func (s *Store) UpsertIfCurrent(provider schemas.ModelProvider, keyID string, un
 	if s.gen[provider] != gen {
 		return false
 	}
-	s.entries[k] = Entry{Models: cp, Meta: meta}
 	s.writeGen.Add(1)
 	return true
 }
@@ -274,6 +274,27 @@ func (s *Store) MetaForProvider(provider schemas.ModelProvider) map[string]*Mode
 	for _, keyID := range keyIDs {
 		for id, m := range byKey[keyID] {
 			out[id] = m
+		}
+	}
+	return out
+}
+
+// CreatedForProvider returns the provider creation time of each model across
+// the provider's entries in the given mode, in Unix seconds. When keys report
+// different times for one model, the latest wins. Models without a reported
+// time are absent. The returned map is owned by the caller.
+func (s *Store) CreatedForProvider(provider schemas.ModelProvider, unfiltered bool) map[string]int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[string]int64)
+	for k, e := range s.entries {
+		if k.Provider != provider || k.Unfiltered != unfiltered {
+			continue
+		}
+		for model, created := range e.Created {
+			if created > out[model] {
+				out[model] = created
+			}
 		}
 	}
 	return out

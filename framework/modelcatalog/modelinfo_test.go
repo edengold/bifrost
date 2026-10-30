@@ -14,7 +14,7 @@ import (
 	"github.com/maximhq/bifrost/framework/modelcatalog/live"
 )
 
-func modelInfoCatalog(t *testing.T) *ModelCatalog {
+func modelInfoCatalog(t testing.TB) *ModelCatalog {
 	t.Helper()
 	pricingPath := filepath.Join(t.TempDir(), "pricing.json")
 	pricingJSON := []byte(`{
@@ -306,6 +306,50 @@ func TestApplyModelInfoNilSafe(t *testing.T) {
 	}
 }
 
+// Every models route enriches through these two methods, so they must resolve by
+// ID, fall back to the alias, keep provider-reported values and be nil-safe.
+func TestEnrichModelsResponsesFromCatalog(t *testing.T) {
+	mc := modelInfoCatalog(t)
+	providerLimit := 1000
+	resp := &schemas.BifrostListModelsResponse{Data: []schemas.Model{
+		{ID: "anthropic/claude-opus-5"},
+		{ID: "anthropic/my-deployment", Alias: schemas.Ptr("claude-opus-5")},
+		{ID: "anthropic/claude-opus-5", MaxInputTokens: &providerLimit},
+		{ID: "anthropic/retired-model"},
+		{ID: "anthropic/unknown-model"},
+	}}
+
+	mc.EnrichListModelsResponse(resp)
+
+	for i, want := range []int{200000, 200000, providerLimit} {
+		got := resp.Data[i].MaxInputTokens
+		if got == nil || *got != want {
+			t.Errorf("Data[%d].MaxInputTokens = %v, want %d", i, got, want)
+		}
+		if out := resp.Data[i].MaxOutputTokens; out == nil || *out != 64000 {
+			t.Errorf("Data[%d].MaxOutputTokens = %v, want 64000", i, out)
+		}
+	}
+	if !resp.Data[3].IsDeprecated {
+		t.Errorf("retired-model should be marked deprecated")
+	}
+	if resp.Data[4].MaxInputTokens != nil || resp.Data[4].Pricing != nil {
+		t.Errorf("unknown model must stay unenriched, got %#v", resp.Data[4])
+	}
+
+	retrieved := &schemas.BifrostModelRetrieveResponse{Model: schemas.Model{ID: "anthropic/claude-opus-5"}}
+	mc.EnrichModelRetrieveResponse(retrieved)
+	if retrieved.MaxInputTokens == nil || *retrieved.MaxInputTokens != 200000 {
+		t.Errorf("retrieve MaxInputTokens = %v, want 200000", retrieved.MaxInputTokens)
+	}
+
+	var nilCatalog *ModelCatalog
+	nilCatalog.EnrichListModelsResponse(resp)
+	nilCatalog.EnrichModelRetrieveResponse(retrieved)
+	mc.EnrichListModelsResponse(nil)
+	mc.EnrichModelRetrieveResponse(nil)
+}
+
 // cachedChatResponse is a chat completion whose prompt was partly served from
 // the prompt cache and partly written to it, so every input-side category the
 // seeded claude-opus-5 entry prices (text, cache read, cache write) is exercised.
@@ -499,4 +543,40 @@ func TestGetModelInfoLiveOverlayClonesPointers(t *testing.T) {
 	if got := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5"); got.ContextLength == nil || *got.ContextLength != 512 {
 		t.Errorf("mutating returned info corrupted the live cache: %v", got.ContextLength)
 	}
+// BenchmarkEnrichListModelsResponse measures the per-listing cost the drop-in
+// models routes now pay. The "lookup-only" case is what they paid before: the
+// same catalog lookup, keeping only the deprecation flag.
+func BenchmarkEnrichListModelsResponse(b *testing.B) {
+	mc := modelInfoCatalog(b)
+	fresh := func() *schemas.BifrostListModelsResponse {
+		data := make([]schemas.Model, 0, 50)
+		for i := 0; i < 25; i++ {
+			data = append(data, schemas.Model{ID: "anthropic/claude-opus-5"}, schemas.Model{ID: "anthropic/unknown-model"})
+		}
+		return &schemas.BifrostListModelsResponse{Data: data}
+	}
+	b.Run("lookup-only", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			b.StopTimer()
+			resp := fresh()
+			b.StartTimer()
+			for i := range resp.Data {
+				provider, name := schemas.ParseModelString(resp.Data[i].ID, "")
+				if e := mc.GetPricingEntryForModel(name, provider); e != nil && e.IsDeprecated {
+					resp.Data[i].IsDeprecated = true
+				}
+			}
+		}
+	})
+	b.Run("enrich", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			b.StopTimer()
+			resp := fresh()
+			b.StartTimer()
+			mc.EnrichListModelsResponse(resp)
+		}
+	})
+
 }
