@@ -206,7 +206,7 @@ func TestGetModelCapabilities_LiveEffortLevelsWin(t *testing.T) {
 	mc.live = live.New(nil)
 	mc.UpsertLive(schemas.OpenAI, "k1", false, []string{"gpt-5"}, map[string]*live.ModelMeta{
 		"gpt-5": {ReasoningEffortLevels: []string{"minimal", "low", "medium", "high"}},
-	})
+	}, nil)
 
 	got := mc.GetModelCapabilities(schemas.OpenAI, "gpt-5")
 	require.NotNil(t, got)

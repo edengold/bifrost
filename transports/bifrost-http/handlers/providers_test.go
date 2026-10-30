@@ -3598,7 +3598,7 @@ func TestListModelDetails_LiveReasoningEfforts(t *testing.T) {
 	h.inMemoryStore.ModelCatalog = modelcatalog.NewTestCatalog(nil)
 	h.inMemoryStore.ModelCatalog.UpsertLive(schemas.OpenAI, "key-a", false, []string{"gpt-4o"}, map[string]*live.ModelMeta{
 		"gpt-4o": {ReasoningEffortLevels: []string{"minimal", "low", "medium", "high"}},
-	})
+	}, nil)
 
 	resp, body := listModelDetailsForTest(t, h, "/api/models/details?provider=openai&limit=100")
 	if len(resp.Models) != 2 {

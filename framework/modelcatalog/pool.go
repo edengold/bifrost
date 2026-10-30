@@ -16,7 +16,6 @@ import (
 func (mc *ModelCatalog) UpsertLive(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*live.ModelMeta, created map[string]int64) {
 	mc.live.Upsert(provider, keyID, unfiltered, models, meta, created)
 }
-}
 
 // UpsertLiveFromResponse extracts model IDs and provider-reported metadata
 // from a BifrostListModelsResponse (parsing "provider/model" prefixes,

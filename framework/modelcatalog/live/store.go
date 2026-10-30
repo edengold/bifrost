@@ -69,10 +69,6 @@ type PricingRates struct {
 	PerRequest         *float64 // pricing.request
 	PerImage           *float64 // pricing.image
 	PerWebSearchQuery  *float64 // pricing.web_search
-=======
-	Models  []string
-	Created map[string]int64 // provider-reported creation time in Unix seconds; untimed models are absent
->>>>>>> e869c3f9adc96ea53c38694a21bb04a8e1085487
 }
 
 type Store struct {
@@ -110,10 +106,14 @@ func New(logger schemas.Logger) *Store {
 // Upsert stores a successful fetch unconditionally. Use it for writes with no
 // in-flight window to lose a race in (seeding, tests); anything that fetches
 // from an upstream first should go through Generation + UpsertIfCurrent.
+// meta and created may be nil and are retained by reference — callers must not
+// mutate them afterwards.
+func (s *Store) Upsert(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*ModelMeta, created map[string]int64) {
 	cp := make([]string, len(models))
 	copy(cp, models)
 	k := Key{Provider: provider, KeyID: keyID, Unfiltered: unfiltered}
 	s.mu.Lock()
+	s.entries[k] = Entry{Models: cp, Meta: meta, Created: created}
 	s.mu.Unlock()
 	s.writeGen.Add(1)
 }
@@ -141,6 +141,9 @@ func (s *Store) Generation(provider schemas.ModelProvider) uint64 {
 // may be gone. Its Invalidate already ran, and no later pass re-fetches or
 // prunes a key that is no longer configured, so an unguarded commit would
 // advertise that key's models until the process restarted.
+// meta and created may be nil and are retained by reference — callers must not
+// mutate them afterwards.
+func (s *Store) UpsertIfCurrent(provider schemas.ModelProvider, keyID string, unfiltered bool, models []string, meta map[string]*ModelMeta, created map[string]int64, gen uint64) bool {
 	cp := make([]string, len(models))
 	copy(cp, models)
 	k := Key{Provider: provider, KeyID: keyID, Unfiltered: unfiltered}
@@ -149,6 +152,7 @@ func (s *Store) Generation(provider schemas.ModelProvider) uint64 {
 	if s.gen[provider] != gen {
 		return false
 	}
+	s.entries[k] = Entry{Models: cp, Meta: meta, Created: created}
 	s.writeGen.Add(1)
 	return true
 }

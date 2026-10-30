@@ -12,10 +12,10 @@ import (
 // and unknown namespace prefixes are left untouched.
 func TestRefineModelForProvider(t *testing.T) {
 	mc := NewTestCatalog(nil)
-	mc.UpsertLive(schemas.Groq, "groq-key", false, []string{"openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b"}, nil)
-	mc.UpsertLive(schemas.OpenRouter, "or-key", false, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-5", "openrouter/auto"}, nil)
-	mc.UpsertLive(schemas.Perplexity, "pplx-key", false, []string{"perplexity/sonar", "anthropic/claude-opus-4-6"}, nil)
-	mc.UpsertLive(schemas.Replicate, "repl-key", false, []string{"anthropic/claude-4.5-sonnet", "meta/llama-3-8b", "black-forest-labs/flux-dev"}, nil)
+	mc.UpsertLive(schemas.Groq, "groq-key", false, []string{"openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct", "qwen/qwen3-32b"}, nil, nil)
+	mc.UpsertLive(schemas.OpenRouter, "or-key", false, []string{"openai/gpt-4o", "anthropic/claude-sonnet-4-5", "openrouter/auto"}, nil, nil)
+	mc.UpsertLive(schemas.Perplexity, "pplx-key", false, []string{"perplexity/sonar", "anthropic/claude-opus-4-6"}, nil, nil)
+	mc.UpsertLive(schemas.Replicate, "repl-key", false, []string{"anthropic/claude-4.5-sonnet", "meta/llama-3-8b", "black-forest-labs/flux-dev"}, nil, nil)
 
 	cases := []struct {
 		name     string
@@ -71,7 +71,7 @@ func TestRefineModelForProviderKeepsDatabricksKeyAliases(t *testing.T) {
 		Models:  schemas.WhiteList{"*"},
 		Aliases: schemas.KeyAliases{"my-alias": {ModelID: "my-provisioned-endpoint"}},
 	}})
-	mc.UpsertLive(schemas.Groq, "groq-key", false, []string{"openai/gpt-oss-120b"})
+	mc.UpsertLive(schemas.Groq, "groq-key", false, []string{"openai/gpt-oss-120b"}, nil, nil)
 	mc.SetKeyConfigForProvider(schemas.Groq, []schemas.Key{{
 		ID:      "groq-key",
 		Models:  schemas.WhiteList{"*"},

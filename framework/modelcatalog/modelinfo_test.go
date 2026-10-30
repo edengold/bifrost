@@ -475,7 +475,7 @@ func TestGetModelInfoLiveOnlyModelIsResolvable(t *testing.T) {
 			ContextLength: iptr(1048576),
 			Pricing:       &live.PricingRates{PromptPerToken: fptr(1e-7), CompletionPerToken: fptr(2.5e-7)},
 		},
-	})
+	}, nil)
 
 	info := mc.GetModelInfo(schemas.Anthropic, "glm-5.3-flash")
 	if info == nil {
@@ -504,7 +504,7 @@ func TestGetModelInfoLiveOverlayWinsPerField(t *testing.T) {
 	mc := modelInfoCatalog(t)
 	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"claude-opus-5"}, map[string]*live.ModelMeta{
 		"claude-opus-5": {ContextLength: iptr(1000000)},
-	})
+	}, nil)
 
 	info := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5")
 	if info == nil {
@@ -530,7 +530,7 @@ func TestGetModelInfoLiveOverlayClonesPointers(t *testing.T) {
 	ctxLen := 512
 	mc.UpsertLive(schemas.Anthropic, "k1", false, []string{"claude-opus-5"}, map[string]*live.ModelMeta{
 		"claude-opus-5": {ContextLength: &ctxLen},
-	})
+	}, nil)
 
 	info := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5")
 	if info == nil || info.ContextLength == nil {
@@ -543,6 +543,8 @@ func TestGetModelInfoLiveOverlayClonesPointers(t *testing.T) {
 	if got := mc.GetModelInfo(schemas.Anthropic, "claude-opus-5"); got.ContextLength == nil || *got.ContextLength != 512 {
 		t.Errorf("mutating returned info corrupted the live cache: %v", got.ContextLength)
 	}
+}
+
 // BenchmarkEnrichListModelsResponse measures the per-listing cost the drop-in
 // models routes now pay. The "lookup-only" case is what they paid before: the
 // same catalog lookup, keeping only the deprecation flag.
